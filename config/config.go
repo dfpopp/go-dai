@@ -29,7 +29,7 @@ type GlobalAppConfig struct {
 type DatabaseConfig struct {
 	MySQL   map[string]MySQLConfig   `json:"mysql"`
 	Mongodb map[string]MongodbConfig `json:"mongodb"`
-	Redis   map[string]RedisConfig   `json:"redis"`
+	Redis   map[string]RedisConfig   `json:"redisDb"`
 }
 
 // MySQLConfig MySQL连接配置

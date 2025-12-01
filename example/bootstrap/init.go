@@ -4,7 +4,7 @@ import (
 	"github.com/dfpopp/go-dai/config"
 	"github.com/dfpopp/go-dai/db/mongoDb"
 	"github.com/dfpopp/go-dai/db/mysql"
-	"github.com/dfpopp/go-dai/db/redis"
+	"github.com/dfpopp/go-dai/db/redisDb"
 	apiRouter "github.com/dfpopp/go-dai/example/app/api/router"
 	"github.com/dfpopp/go-dai/http"
 	"github.com/dfpopp/go-dai/logger"
@@ -22,7 +22,7 @@ func Init(appName string) *http.Server {
 	// 3. 初始化数据库
 	mysql.InitMySQL()
 	mongoDb.InitMongoDB()
-	redis.InitRedis()
+	redisDb.InitRedis()
 
 	// 4. 创建HTTP服务
 	server := http.NewServer(appName)
