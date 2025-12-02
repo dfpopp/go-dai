@@ -14,11 +14,10 @@ func (m *Db) GetData() ([]map[string]interface{}, error) {
 }
 
 // IdToObjectID 字符串转ObjectID
-func (m *Db) IdToObjectID(id string) (primitive.ObjectID, error) {
+func IdToObjectID(id string) (primitive.ObjectID, error) {
 	oid, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
-		m.Err = fmt.Errorf("转换ObjectID失败: %v", err)
-		return primitive.NilObjectID, m.Err
+		return primitive.NilObjectID, fmt.Errorf("转换ObjectID失败: %v", err)
 	}
 	return oid, nil
 }

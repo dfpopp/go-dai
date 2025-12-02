@@ -361,6 +361,7 @@ func (m *Db) FindAll(ctx context.Context) *Db {
 
 // FindCount 统计符合条件的文档数
 func (m *Db) FindCount(ctx context.Context) (int64, error) {
+	defer m.clearData(false)
 	if m.Err != nil {
 		return 0, m.Err
 	}
@@ -393,6 +394,7 @@ func (m *Db) Find(ctx context.Context) (string, error) {
 
 // Aggregate 执行聚合查询
 func (m *Db) Aggregate(ctx context.Context) *Db {
+	defer m.clearData(false)
 	if m.Err != nil {
 		return m
 	}
@@ -438,6 +440,7 @@ func (m *Db) Aggregate(ctx context.Context) *Db {
 
 // Insert 插入单条文档
 func (m *Db) Insert(ctx context.Context, doc interface{}) (primitive.ObjectID, error) {
+	defer m.clearData(false)
 	if m.Err != nil {
 		return primitive.NilObjectID, m.Err
 	}
@@ -468,6 +471,7 @@ func (m *Db) Insert(ctx context.Context, doc interface{}) (primitive.ObjectID, e
 
 // InsertAll 批量插入文档
 func (m *Db) InsertAll(ctx context.Context, docs []interface{}) ([]interface{}, error) {
+	defer m.clearData(false)
 	if m.Err != nil {
 		return nil, m.Err
 	}
@@ -491,6 +495,7 @@ func (m *Db) InsertAll(ctx context.Context, docs []interface{}) ([]interface{}, 
 
 // Update 更新文档（默认更新多条）
 func (m *Db) Update(ctx context.Context, update bson.D) (int64, error) {
+	defer m.clearData(false)
 	if m.Err != nil {
 		return 0, m.Err
 	}
@@ -519,6 +524,7 @@ func (m *Db) Update(ctx context.Context, update bson.D) (int64, error) {
 
 // UpdateOne 更新单条文档
 func (m *Db) UpdateOne(ctx context.Context, update bson.D) (int64, error) {
+	defer m.clearData(false)
 	if m.Err != nil {
 		return 0, m.Err
 	}
@@ -543,6 +549,7 @@ func (m *Db) UpdateOne(ctx context.Context, update bson.D) (int64, error) {
 
 // Delete 删除文档（默认删除多条）
 func (m *Db) Delete(ctx context.Context) (int64, error) {
+	defer m.clearData(false)
 	if m.Err != nil {
 		return 0, m.Err
 	}
@@ -567,6 +574,7 @@ func (m *Db) Delete(ctx context.Context) (int64, error) {
 
 // DeleteOne 删除单条文档
 func (m *Db) DeleteOne(ctx context.Context) (int64, error) {
+	defer m.clearData(false)
 	if m.Err != nil {
 		return 0, m.Err
 	}
