@@ -153,9 +153,7 @@ func (db *MysqlDb) SetWhere(tpl string, args ...interface{}) *MysqlDb {
 	}
 	// 将模板和参数加入列表
 	db.whereTemplates = append(db.whereTemplates, tpl)
-	fmt.Println(function.Json_encode(args))
 	db.whereArgs = append(db.whereArgs, args...)
-	fmt.Println(function.Json_encode(args))
 	return db
 }
 func (db *MysqlDb) SetWhereOr(data map[string]interface{}) *MysqlDb {
@@ -277,8 +275,6 @@ func (db *MysqlDb) FindAll(ctx context.Context) *MysqlDb {
 		rows, err = db.Db.QueryContext(ctx, sqlStr, db.whereArgs...)
 	}
 	if err != nil {
-		fmt.Println(sqlStr, function.Json_encode(db.whereArgs))
-		fmt.Println("这里错误了" + err.Error())
 		db.err = err
 		return db
 	}
@@ -324,7 +320,6 @@ func (db *MysqlDb) FindAll(ctx context.Context) *MysqlDb {
 		db.err = fmt.Errorf("遍历结果集失败: %w", err)
 		return db
 	}
-	fmt.Println(function.Json_encode(result))
 	db.Data = result
 	return db
 }
