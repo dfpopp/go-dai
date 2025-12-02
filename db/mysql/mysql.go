@@ -154,10 +154,8 @@ func (db *MysqlDb) SetWhere(tpl string, args ...interface{}) *MysqlDb {
 	// 将模板和参数加入列表
 	db.whereTemplates = append(db.whereTemplates, tpl)
 	fmt.Println(function.Json_encode(args))
-	for _, arg := range args {
-		db.whereArgs = append(db.whereArgs, arg)
-	}
-	fmt.Println(function.Json_encode(db.whereArgs))
+	db.whereArgs = append(db.whereArgs, args...)
+	fmt.Println(function.Json_encode(args))
 	return db
 }
 func (db *MysqlDb) SetWhereOr(data map[string]interface{}) *MysqlDb {
@@ -274,9 +272,9 @@ func (db *MysqlDb) FindAll(ctx context.Context) *MysqlDb {
 	var rows *sql.Rows
 	var err error
 	if db.Tx != nil {
-		rows, err = db.Tx.QueryContext(ctx, sqlStr, db.whereArgs)
+		rows, err = db.Tx.QueryContext(ctx, sqlStr, db.whereArgs...)
 	} else {
-		rows, err = db.Db.QueryContext(ctx, sqlStr, db.whereArgs)
+		rows, err = db.Db.QueryContext(ctx, sqlStr, db.whereArgs...)
 	}
 	if err != nil {
 		fmt.Println(sqlStr, function.Json_encode(db.whereArgs))
