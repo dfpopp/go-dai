@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-var validIdentifierRegex = regexp.MustCompile(`^[a-zA-Z0-9_]+(\.[a-zA-Z0-9_]+)?$`)
+var validIdentifierRegex = regexp.MustCompile(`^[a-zA-Z0-9_\s]+(\.[a-zA-Z0-9_\s]+)?$`)
 
 // 校验表名/字段名是否为合法标识符（防止注入）
 func isValidIdentifier(s string) bool {
