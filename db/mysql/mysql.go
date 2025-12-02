@@ -275,6 +275,8 @@ func (db *MysqlDb) FindAll(ctx context.Context) *MysqlDb {
 		rows, err = db.Db.QueryContext(ctx, sqlStr, db.whereArgs)
 	}
 	if err != nil {
+		fmt.Println(sqlStr, function.Json_encode(db.whereArgs))
+		fmt.Println("这里错误了" + err.Error())
 		db.err = err
 		return db
 	}
@@ -320,6 +322,7 @@ func (db *MysqlDb) FindAll(ctx context.Context) *MysqlDb {
 		db.err = fmt.Errorf("遍历结果集失败: %w", err)
 		return db
 	}
+	fmt.Println(function.Json_encode(result))
 	db.Data = result
 	return db
 }
