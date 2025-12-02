@@ -153,7 +153,9 @@ func (db *MysqlDb) SetWhere(tpl string, args ...interface{}) *MysqlDb {
 	}
 	// 将模板和参数加入列表
 	db.whereTemplates = append(db.whereTemplates, tpl)
+	fmt.Println(function.Json_encode(args))
 	db.whereArgs = append(db.whereArgs, args...)
+	fmt.Println(function.Json_encode(db.whereArgs))
 	return db
 }
 func (db *MysqlDb) SetWhereOr(data map[string]interface{}) *MysqlDb {
