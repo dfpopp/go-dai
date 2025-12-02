@@ -511,10 +511,8 @@ func (m *Db) Update(ctx context.Context, update bson.D) (int64, error) {
 
 	coll := m.Db.Collection(m.Collection)
 	txCtx := m.getTxContext(ctx)
-
 	// 构造更新操作（$set）
-	updateDoc := bson.D{{"$set", update}}
-	res, err := coll.UpdateMany(txCtx, m.Filter, updateDoc, m.UpdateOptions)
+	res, err := coll.UpdateMany(txCtx, m.Filter, update, m.UpdateOptions)
 	if err != nil {
 		m.Err = fmt.Errorf("更新失败: %v", err)
 		return 0, m.Err
@@ -534,12 +532,9 @@ func (m *Db) UpdateOne(ctx context.Context, update bson.D) (int64, error) {
 	if len(update) == 0 {
 		return 0, errors.New("更新条件不能为空")
 	}
-
 	coll := m.Db.Collection(m.Collection)
 	txCtx := m.getTxContext(ctx)
-
-	updateDoc := bson.D{{"$set", update}}
-	res, err := coll.UpdateOne(txCtx, m.Filter, updateDoc, m.UpdateOptions)
+	res, err := coll.UpdateOne(txCtx, m.Filter, update, m.UpdateOptions)
 	if err != nil {
 		m.Err = fmt.Errorf("更新单条失败: %v", err)
 		return 0, m.Err
