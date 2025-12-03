@@ -11,6 +11,7 @@ import (
 	"math"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -54,8 +55,22 @@ func InitMySQL() {
 			logger.Error("MySQL连接失败: " + err.Error())
 		} else {
 			// 设置连接池参数
+			cpuNum := runtime.NumCPU()
+			if cfg.MaxOpenConnNum <= 0 {
+				cfg.MaxOpenConnNum = cpuNum * 3
+			}
+			if cfg.MaxIdleConnNum <= 0 {
+				cfg.MaxIdleConnNum = cpuNum * 2
+			}
+			if cfg.ConnMaxIdleTime <= 0 {
+				cfg.ConnMaxIdleTime = 300
+			}
+			if cfg.ConnMaxLifetime <= 0 {
+				cfg.ConnMaxLifetime = 1800
+			}
 			db.SetMaxOpenConns(cfg.MaxOpenConnNum)
 			db.SetMaxIdleConns(cfg.MaxIdleConnNum)
+			db.SetConnMaxIdleTime(time.Duration(cfg.ConnMaxIdleTime) * time.Second) // 空闲连接超时时间（300秒无使用则关闭）
 			db.SetConnMaxLifetime(time.Duration(cfg.ConnMaxLifetime) * time.Second) // 连接最长存活时间;mysql default conn timeout=8h, should < mysql_timeout
 			// 测试连接
 			if err := db.Ping(); err != nil {

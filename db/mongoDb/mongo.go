@@ -14,6 +14,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 	"os"
 	"os/signal"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -71,8 +72,15 @@ func connect(cfg config.MongodbConfig) (*mongo.Client, error) {
 	if cfg.Port == "" {
 		cfg.Port = "27017"
 	}
+	cpuNum := runtime.NumCPU()
 	if cfg.MaxPoolSize == 0 {
-		cfg.MaxPoolSize = 64
+		cfg.MaxPoolSize = uint64(cpuNum) * 3
+	}
+	if cfg.MinPoolSize == 0 {
+		cfg.MinPoolSize = uint64(cpuNum)
+	}
+	if cfg.MaxConnIdleTime == 0 {
+		cfg.MaxConnIdleTime = 300 //5分钟
 	}
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 5 * time.Second
@@ -88,6 +96,9 @@ func connect(cfg config.MongodbConfig) (*mongo.Client, error) {
 	clientOpts := options.Client().ApplyURI(uri)
 	clientOpts.SetCompressors([]string{"snappy"})
 	clientOpts.SetMaxPoolSize(cfg.MaxPoolSize)
+	clientOpts.SetMinPoolSize(cfg.MinPoolSize)
+	clientOpts.SetMaxConnIdleTime(time.Duration(cfg.MaxConnIdleTime) * time.Second)
+	clientOpts.SetConnectTimeout(cfg.Timeout * time.Second)
 	// 建立连接
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()

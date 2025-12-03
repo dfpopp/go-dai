@@ -43,32 +43,42 @@ type MySQLConfig struct {
 	Pre             string `json:"pre"`
 	MaxOpenConnNum  int    `json:"max_open_conn_num"`
 	MaxIdleConnNum  int    `json:"max_idle_conn_num"`
+	ConnMaxIdleTime int    `json:"conn_max_idleTime"`
 	ConnMaxLifetime int    `json:"conn_max_lifetime"`
 }
 
 // MongodbConfig MongoDB连接配置
 type MongodbConfig struct {
-	Host        string        `json:"host"`
-	Port        string        `json:"port"`
-	User        string        `json:"user"`
-	Pwd         string        `json:"pwd"`
-	Dbname      string        `json:"dbname"`
-	Pre         string        `json:"pre"`
-	Charset     string        `json:"charset"`
-	MaxPoolSize uint64        `json:"max_pool_size"` // 最大连接池大小
-	Timeout     time.Duration `json:"timeout"`       // 连接超时时间(秒)
+	Host            string        `json:"host"`
+	Port            string        `json:"port"`
+	User            string        `json:"user"`
+	Pwd             string        `json:"pwd"`
+	Dbname          string        `json:"dbname"`
+	Pre             string        `json:"pre"`
+	Charset         string        `json:"charset"`
+	MaxPoolSize     uint64        `json:"max_pool_size"`      // 最大连接池大小
+	MinPoolSize     uint64        `json:"min_pool_size"`      // 最小空闲连接数
+	MaxConnIdleTime int           `json:"max_conn_idle_time"` // 空闲连接 多少秒后关闭
+	Timeout         time.Duration `json:"timeout"`            // 连接超时时间(秒)
 }
 
 // RedisConfig redis连接配置
 type RedisConfig struct {
-	Host         string `json:"host"`
-	Port         string `json:"port"`
-	Pwd          string `json:"pwd"`
-	Pre          string `json:"pre"`
-	PoolSize     int    `json:"pool_size"`      // 最大连接池大小
-	MinIdleConns int    `json:"min_idle_conns"` //在启动阶段创建指定数量的Idle连接，并长期维持idle状态的连接数不少于指定数量；
-	IdleTimeout  int    `json:"idle_timeout"`   //连接池闲置连接超时，自动关闭过期连接(秒)
-	Timeout      int    `json:"timeout"`        //表示连接超时(秒)
+	Host            string `json:"host"`
+	Port            string `json:"port"`
+	Pwd             string `json:"pwd"`
+	Pre             string `json:"pre"`
+	Db              int    `json:"db_index"`       // 选中的数据库（默认 0）
+	PoolSize        int    `json:"pool_size"`      // 最大连接池大小
+	MinIdleConns    int    `json:"min_idle_conns"` //在启动阶段创建指定数量的Idle连接，并长期维持idle状态的连接数不少于指定数量；
+	MaxConnLifetime int    `json:"max_conn_lifetime"`
+	IdleTimeout     int    `json:"idle_timeout"`      //连接池闲置连接超时，自动关闭过期连接(秒)
+	ReadTimeout     int    `json:"read_timeout"`      //读取超时 (秒)
+	WriteTimeout    int    `json:"write_timeout"`     //写入超时 (秒)
+	Timeout         int    `json:"timeout"`           //表示连接超时(秒)
+	MaxRetries      int    `json:"max_retries"`       // 命令失败重试次数
+	MinRetryBackoff int    `json:"min_retry_backoff"` // 最小重试间隔（毫秒）
+	MaxRetryBackoff int    `json:"max_retry_backoff"` // 最大重试间隔（毫秒）
 }
 type PostLoadHook func(*GlobalAppConfig) error
 

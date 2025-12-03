@@ -6,6 +6,7 @@ import (
 	"github.com/go-redis/redis"
 	"os"
 	"os/signal"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -28,11 +29,36 @@ type DbObj struct {
 func InitRedis() {
 	cfgMap := config.GetRedisConfig()
 	for dbKey, cfg := range cfgMap {
-		if cfg.MinIdleConns < 2 {
-			cfg.MinIdleConns = 2
+		cpuNum := runtime.NumCPU()
+		if cfg.MinIdleConns == 0 {
+			cfg.MinIdleConns = cpuNum
 		}
-		if cfg.PoolSize < 4 {
-			cfg.PoolSize = 4
+		if cfg.PoolSize == 0 {
+			cfg.PoolSize = cpuNum * 3
+		}
+		if cfg.MaxConnLifetime == 0 {
+			cfg.MaxConnLifetime = 1800
+		}
+		if cfg.IdleTimeout == 0 {
+			cfg.IdleTimeout = 300
+		}
+		if cfg.Timeout == 0 {
+			cfg.Timeout = 10
+		}
+		if cfg.ReadTimeout == 0 {
+			cfg.ReadTimeout = 5
+		}
+		if cfg.WriteTimeout == 0 {
+			cfg.WriteTimeout = 5
+		}
+		if cfg.MaxRetries == 0 {
+			cfg.MaxRetries = 2
+		}
+		if cfg.MinRetryBackoff == 0 {
+			cfg.MinRetryBackoff = 100 //单位毫秒
+		}
+		if cfg.MaxRetryBackoff == 0 {
+			cfg.MaxRetryBackoff = 1 //单位秒
 		}
 		// 端口默认值（避免配置缺失导致 Addr 格式错误）
 		if cfg.Port == "" {
@@ -40,16 +66,21 @@ func InitRedis() {
 		}
 		// 构建 Redis 客户端配置
 		redisOpts := &redis.Options{
-			Network:  "tcp",
-			Addr:     fmt.Sprintf("%s:%s", cfg.Host, cfg.Port), // 格式化 Addr，避免空端口
-			Password: cfg.Pwd,                                  // 空密码直接传入，适配无密码环境
-			DB:       0,
-
+			Network:      "tcp",
+			Addr:         fmt.Sprintf("%s:%s", cfg.Host, cfg.Port), // 格式化 Addr，避免空端口
+			Password:     cfg.Pwd,                                  // 空密码直接传入，适配无密码环境
+			DB:           0,
 			PoolSize:     cfg.PoolSize,
 			MinIdleConns: cfg.MinIdleConns,
-			IdleTimeout:  300 * time.Second, // 优化：连接池闲置连接超时，自动关闭过期连接（避免资源浪费）
+			MaxConnAge:   time.Duration(cfg.MaxConnLifetime) * time.Second,
+			IdleTimeout:  time.Duration(cfg.IdleTimeout) * time.Second, // 优化：连接池闲置连接超时，自动关闭过期连接（避免资源浪费）
 			// v7 版本的连接超时字段名是 DialTimeout（v8 是 Timeout，注意区别！）
-			DialTimeout: 5 * time.Second, // v7 用 DialTimeout 表示连接超时
+			DialTimeout:     time.Duration(cfg.Timeout) * time.Second,              // v7 用 DialTimeout 表示连接超时
+			ReadTimeout:     time.Duration(cfg.ReadTimeout) * time.Second,          // 读取超时
+			WriteTimeout:    time.Duration(cfg.WriteTimeout) * time.Second,         // 写入超时
+			MaxRetries:      cfg.MaxRetries,                                        // 命令失败重试次数
+			MinRetryBackoff: time.Duration(cfg.MinRetryBackoff) * time.Millisecond, // 最小重试间隔
+			MaxRetryBackoff: time.Duration(cfg.MaxRetryBackoff) * time.Second,      // 最大重试间隔
 		}
 		// 创建客户端
 		db := redis.NewClient(redisOpts)
