@@ -28,6 +28,7 @@ type DbObj struct {
 func InitRedis() {
 	cfgMap := config.GetRedisConfig()
 	for dbKey, cfg := range cfgMap {
+		fmt.Println(dbKey)
 		if cfg.MinIdleConns < 2 {
 			cfg.MinIdleConns = 2
 		}
@@ -66,14 +67,15 @@ func InitRedis() {
 	registerShutdownHook()
 }
 func GetRedisDB(dbKey string) (*RedisDb, error) {
+	fmt.Println("获取" + dbKey)
 	val, ok := multiDBPool.Load(dbKey)
 	if !ok {
-		return nil, fmt.Errorf("数据库[%s]连接池未初始化", dbKey)
+		return nil, fmt.Errorf("Redis[%s]连接池未初始化", dbKey)
 	}
 	// 类型断言：将interface{}转为*sql.DB
 	dbObj, ok := val.(DbObj)
 	if !ok {
-		return nil, fmt.Errorf("数据库[%s]连接池类型错误", dbKey)
+		return nil, fmt.Errorf("Redis[%s]连接池类型错误", dbKey)
 	}
 	return &RedisDb{
 		Db:    dbObj.Db,
