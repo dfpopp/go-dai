@@ -421,6 +421,7 @@ func (m *Db) FindCount(ctx context.Context) (int64, error) {
 
 // Find 执行查询，返回单条结果
 func (m *Db) Find(ctx context.Context) (string, error) {
+	fmt.Println("已进入find")
 	if m.Err != nil {
 		return "", m.Err
 	}
