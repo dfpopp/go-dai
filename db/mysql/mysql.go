@@ -731,6 +731,9 @@ func (db *MysqlDb) ToString() (string, error) {
 	if db.err != nil {
 		return "", db.err
 	}
+	if len(db.Data) == 0 {
+		return "", nil
+	}
 	return function.Json_encode(db.Data), nil
 }
 func (db *MysqlDb) clearData(isClearTx bool) {

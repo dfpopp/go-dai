@@ -351,6 +351,9 @@ func (m *Db) FindAll(ctx context.Context) *Db {
 		m.Err = fmt.Errorf("查询失败: %v", err)
 		return m
 	}
+	if cursor == nil {
+		return m
+	}
 	defer func(cursor *mongo.Cursor, ctx context.Context) {
 		closeErr := cursor.Close(ctx)
 		if err != nil {
@@ -358,10 +361,8 @@ func (m *Db) FindAll(ctx context.Context) *Db {
 		}
 	}(cursor, txCtx)
 	// 解析结果
-	fmt.Println("不知道哪里有错")
 	var result []map[string]interface{}
 	for cursor.Next(txCtx) {
-		fmt.Println("有没有到头")
 		var doc map[string]interface{}
 		if err := cursor.Decode(&doc); err != nil {
 			m.Err = fmt.Errorf("解析文档失败: %v", err)
@@ -369,15 +370,12 @@ func (m *Db) FindAll(ctx context.Context) *Db {
 		}
 		result = append(result, doc)
 	}
-	fmt.Println("是不是没有数据")
 	// 检查游标错误
 	if err := cursor.Err(); err != nil {
 		m.Err = fmt.Errorf("游标遍历失败: %v", err)
 		return m
 	}
-	fmt.Println("到这里了")
 	m.Data = result
-	fmt.Println("FindAll成功了")
 	return m
 }
 
@@ -404,13 +402,10 @@ func (m *Db) FindCount(ctx context.Context) (int64, error) {
 func (m *Db) Find(ctx context.Context) (string, error) {
 	defer m.clearData(false)
 	m.SetLimit(1)
-	fmt.Println("非常好")
 	m.FindAll(ctx)
 	if m.Err != nil {
 		return "", m.Err
 	}
-	fmt.Println("nihao")
-	fmt.Printf(function.Json_encode(m.Data))
 	if len(m.Data) > 0 {
 		return function.Json_encode(m.Data[0]), nil
 	}
@@ -433,10 +428,12 @@ func (m *Db) Aggregate(ctx context.Context) *Db {
 	}
 	coll := m.Db.Collection(m.Collection)
 	txCtx := m.getTxContext(ctx)
-
 	cursor, err := coll.Aggregate(txCtx, m.AggregatePipe)
 	if err != nil {
 		m.Err = fmt.Errorf("聚合查询失败: %v", err)
+		return m
+	}
+	if cursor == nil {
 		return m
 	}
 	defer func(cursor *mongo.Cursor, ctx context.Context) {
@@ -475,16 +472,13 @@ func (m *Db) Insert(ctx context.Context, doc interface{}) (primitive.ObjectID, e
 	if doc == nil {
 		return primitive.NilObjectID, errors.New("插入文档不能为空")
 	}
-
 	coll := m.Db.Collection(m.Collection)
 	txCtx := m.getTxContext(ctx)
-
 	res, err := coll.InsertOne(txCtx, doc)
 	if err != nil {
 		m.Err = fmt.Errorf("插入失败: %v", err)
 		return primitive.NilObjectID, m.Err
 	}
-
 	// 转换为ObjectID
 	oid, ok := res.InsertedID.(primitive.ObjectID)
 	if !ok {
@@ -621,6 +615,9 @@ func (m *Db) ToString() (string, error) {
 	defer m.clearData(false)
 	if m.Err != nil {
 		return "", m.Err
+	}
+	if len(m.Data) == 0 {
+		return "", nil
 	}
 	return function.Json_encode(m.Data), nil
 }
