@@ -421,6 +421,10 @@ func (m *Db) FindCount(ctx context.Context) (int64, error) {
 
 // Find 执行查询，返回单条结果
 func (m *Db) Find(ctx context.Context) (string, error) {
+	fmt.Println(function.Json_encode(m))
+	if m.Collection == "member_point" {
+		fmt.Printf("<<<<0000")
+	}
 	defer m.clearData(false)
 	m.SetLimit(1)
 	if m.Collection == "member_point" {
