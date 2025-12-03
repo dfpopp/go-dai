@@ -352,8 +352,13 @@ func (m *Db) FindAll(ctx context.Context) *Db {
 		return m
 	}
 	if cursor == nil {
-
+		if m.Collection == "member_point" {
+			fmt.Printf("没有数据")
+		}
 		return m
+	}
+	if m.Collection == "member_point" {
+		fmt.Printf(">>>okkk")
 	}
 	defer func(cursor *mongo.Cursor, ctx context.Context) {
 		closeErr := cursor.Close(ctx)
@@ -361,6 +366,9 @@ func (m *Db) FindAll(ctx context.Context) *Db {
 			logger.Error("mongoDb 关闭结果集失败: %v", closeErr)
 		}
 	}(cursor, txCtx)
+	if m.Collection == "member_point" {
+		fmt.Printf("okkk")
+	}
 	// 解析结果
 	var result []map[string]interface{}
 	for cursor.Next(txCtx) {
@@ -369,7 +377,13 @@ func (m *Db) FindAll(ctx context.Context) *Db {
 			m.Err = fmt.Errorf("解析文档失败: %v", err)
 			return m
 		}
+		if m.Collection == "member_point" {
+			fmt.Printf("<<<<111")
+		}
 		result = append(result, doc)
+	}
+	if m.Collection == "member_point" {
+		fmt.Printf("<<<<okkk")
 	}
 	// 检查游标错误
 	if err := cursor.Err(); err != nil {
