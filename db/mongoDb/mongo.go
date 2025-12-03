@@ -403,6 +403,8 @@ func (m *Db) Find(ctx context.Context) (string, error) {
 	if m.Err != nil {
 		return "", m.Err
 	}
+	fmt.Println("nihao")
+	fmt.Printf(function.Json_encode(m.Data))
 	if len(m.Data) > 0 {
 		return function.Json_encode(m.Data[0]), nil
 	}
