@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"sync"
-	"time"
 )
 
 // AppConfig 单个应用配置
@@ -49,17 +48,17 @@ type MySQLConfig struct {
 
 // MongodbConfig MongoDB连接配置
 type MongodbConfig struct {
-	Host            string        `json:"host"`
-	Port            string        `json:"port"`
-	User            string        `json:"user"`
-	Pwd             string        `json:"pwd"`
-	Dbname          string        `json:"dbname"`
-	Pre             string        `json:"pre"`
-	Charset         string        `json:"charset"`
-	MaxPoolSize     uint64        `json:"max_pool_size"`      // 最大连接池大小
-	MinPoolSize     uint64        `json:"min_pool_size"`      // 最小空闲连接数
-	MaxConnIdleTime int           `json:"max_conn_idle_time"` // 空闲连接 多少秒后关闭
-	Timeout         time.Duration `json:"timeout"`            // 连接超时时间(秒)
+	Host            string `json:"host"`
+	Port            string `json:"port"`
+	User            string `json:"user"`
+	Pwd             string `json:"pwd"`
+	Dbname          string `json:"dbname"`
+	Pre             string `json:"pre"`
+	Charset         string `json:"charset"`
+	MaxPoolSize     uint64 `json:"max_pool_size"`      // 最大连接池大小
+	MinPoolSize     uint64 `json:"min_pool_size"`      // 最小空闲连接数
+	MaxConnIdleTime int    `json:"max_conn_idle_time"` // 空闲连接 多少秒后关闭
+	Timeout         int    `json:"timeout"`            // 连接超时时间(秒)
 }
 
 // RedisConfig redis连接配置

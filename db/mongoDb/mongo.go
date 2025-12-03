@@ -99,9 +99,9 @@ func connect(cfg config.MongodbConfig) (*mongo.Client, error) {
 	clientOpts.SetMaxPoolSize(cfg.MaxPoolSize)
 	clientOpts.SetMinPoolSize(cfg.MinPoolSize)
 	clientOpts.SetMaxConnIdleTime(time.Duration(cfg.MaxConnIdleTime) * time.Second)
-	clientOpts.SetConnectTimeout(cfg.Timeout * time.Second)
+	clientOpts.SetConnectTimeout(time.Duration(cfg.Timeout) * time.Second)
 	// 建立连接
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.Timeout)*time.Second)
 	defer cancel()
 	client, err := mongo.Connect(ctx, clientOpts)
 	if err != nil {
