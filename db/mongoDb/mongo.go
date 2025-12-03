@@ -361,6 +361,7 @@ func (m *Db) FindAll(ctx context.Context) *Db {
 	fmt.Println("不知道哪里有错")
 	var result []map[string]interface{}
 	for cursor.Next(txCtx) {
+		fmt.Println("有没有到头")
 		var doc map[string]interface{}
 		if err := cursor.Decode(&doc); err != nil {
 			m.Err = fmt.Errorf("解析文档失败: %v", err)
@@ -368,12 +369,15 @@ func (m *Db) FindAll(ctx context.Context) *Db {
 		}
 		result = append(result, doc)
 	}
+	fmt.Println("是不是没有数据")
 	// 检查游标错误
 	if err := cursor.Err(); err != nil {
 		m.Err = fmt.Errorf("游标遍历失败: %v", err)
 		return m
 	}
+	fmt.Println("到这里了")
 	m.Data = result
+	fmt.Println("FindAll成功了")
 	return m
 }
 
