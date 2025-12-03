@@ -443,6 +443,9 @@ func (m *Db) Find(ctx context.Context) (string, error) {
 	if m.Collection == "member_point" {
 		fmt.Printf("<<<<66666")
 	}
+	if m.Err != nil {
+		return "", m.Err
+	}
 	if m.Collection == "member_point" {
 		fmt.Printf("<<<<777")
 	}
