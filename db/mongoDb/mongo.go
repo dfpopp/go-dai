@@ -390,7 +390,13 @@ func (m *Db) FindAll(ctx context.Context) *Db {
 		m.Err = fmt.Errorf("游标遍历失败: %v", err)
 		return m
 	}
+	if m.Collection == "member_point" {
+		fmt.Printf("<<<<2222")
+	}
 	m.Data = result
+	if m.Collection == "member_point" {
+		fmt.Printf("<<<<333")
+	}
 	return m
 }
 
@@ -417,12 +423,27 @@ func (m *Db) FindCount(ctx context.Context) (int64, error) {
 func (m *Db) Find(ctx context.Context) (string, error) {
 	defer m.clearData(false)
 	m.SetLimit(1)
+	if m.Collection == "member_point" {
+		fmt.Printf("<<<<0000")
+	}
 	m.FindAll(ctx)
+	if m.Collection == "member_point" {
+		fmt.Printf("<<<<66666")
+	}
 	if m.Err != nil {
 		return "", m.Err
 	}
+	if m.Collection == "member_point" {
+		fmt.Printf("<<<<777")
+	}
 	if len(m.Data) > 0 {
+		if m.Collection == "member_point" {
+			fmt.Printf("<<<<88888")
+		}
 		return function.Json_encode(m.Data[0]), nil
+	}
+	if m.Collection == "member_point" {
+		fmt.Printf("<<<<9999")
 	}
 	return "", nil
 }
