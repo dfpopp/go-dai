@@ -421,6 +421,15 @@ func (m *Db) FindCount(ctx context.Context) (int64, error) {
 
 // Find 执行查询，返回单条结果
 func (m *Db) Find(ctx context.Context) (string, error) {
+	if m.Err != nil {
+		return "", m.Err
+	}
+	if m.Db == nil {
+		return "", errors.New("数据库资源不存在")
+	}
+	if m.Collection == "" {
+		return "", errors.New("未指定集合名")
+	}
 	fmt.Println(function.Json_encode(m))
 	if m.Collection == "member_point" {
 		fmt.Printf("<<<<0000")
@@ -433,9 +442,6 @@ func (m *Db) Find(ctx context.Context) (string, error) {
 	m.FindAll(ctx)
 	if m.Collection == "member_point" {
 		fmt.Printf("<<<<66666")
-	}
-	if m.Err != nil {
-		return "", m.Err
 	}
 	if m.Collection == "member_point" {
 		fmt.Printf("<<<<777")
