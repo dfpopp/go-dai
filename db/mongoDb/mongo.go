@@ -85,6 +85,7 @@ func connect(cfg config.MongodbConfig) (*mongo.Client, error) {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 5 * time.Second
 	}
+	fmt.Printf(function.Json_encode(cfg))
 	// 构建连接URI
 	var uri string
 	if cfg.Pwd != "" {
