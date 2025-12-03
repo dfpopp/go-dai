@@ -358,6 +358,7 @@ func (m *Db) FindAll(ctx context.Context) *Db {
 		}
 	}(cursor, txCtx)
 	// 解析结果
+	fmt.Println("不知道哪里有错")
 	var result []map[string]interface{}
 	for cursor.Next(txCtx) {
 		var doc map[string]interface{}
@@ -399,6 +400,7 @@ func (m *Db) FindCount(ctx context.Context) (int64, error) {
 func (m *Db) Find(ctx context.Context) (string, error) {
 	defer m.clearData(false)
 	m.SetLimit(1)
+	fmt.Println("非常好")
 	m.FindAll(ctx)
 	if m.Err != nil {
 		return "", m.Err
