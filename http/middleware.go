@@ -1,6 +1,10 @@
 package http
 
-import "net/http"
+import (
+	"fmt"
+	"github.com/dfpopp/go-dai/db/redisDb"
+	"net/http"
+)
 
 // MiddlewareFunc 中间件函数类型
 type MiddlewareFunc func(next HandlerFunc, c *Context)
@@ -10,6 +14,12 @@ type HandlerFunc func(*Context)
 
 // Recovery 异常恢复中间件
 func Recovery() MiddlewareFunc {
+	defer func() {
+		err := redisDb.CloseRedis()
+		if err != nil {
+			fmt.Println("《《关闭错误：" + err.Error())
+		}
+	}()
 	return func(next HandlerFunc, c *Context) {
 		defer func() {
 			if err := recover(); err != nil {
