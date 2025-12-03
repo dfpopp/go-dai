@@ -3,7 +3,6 @@ package redisDb
 import (
 	"fmt"
 	"github.com/dfpopp/go-dai/config"
-	"github.com/dfpopp/go-dai/function"
 	"github.com/go-redis/redis"
 	"os"
 	"os/signal"
@@ -28,9 +27,7 @@ type DbObj struct {
 // InitRedis 初始化Redis连接池
 func InitRedis() {
 	cfgMap := config.GetRedisConfig()
-	fmt.Println(function.Json_encode(cfgMap))
 	for dbKey, cfg := range cfgMap {
-		fmt.Println(dbKey)
 		if cfg.MinIdleConns < 2 {
 			cfg.MinIdleConns = 2
 		}
@@ -69,7 +66,6 @@ func InitRedis() {
 	registerShutdownHook()
 }
 func GetRedisDB(dbKey string) (*RedisDb, error) {
-	fmt.Println("获取" + dbKey)
 	val, ok := multiDBPool.Load(dbKey)
 	if !ok {
 		return nil, fmt.Errorf("Redis[%s]连接池未初始化", dbKey)
