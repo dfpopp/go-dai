@@ -12,7 +12,10 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -50,10 +53,13 @@ func InitMongoDB() {
 	for dbKey, cfg := range cfgMap {
 		client, err := connect(cfg)
 		if err != nil {
-			panic(fmt.Sprintf("MongoDB连接初始化失败（%s）: %v", dbKey, err))
+			logger.Error(fmt.Sprintf("MongoDB连接初始化失败（%s）: %v", dbKey, err))
+		} else {
+			multiClientPool.Store(dbKey, DbObj{Client: client, DbName: cfg.Dbname, Pre: cfg.Pre})
 		}
-		multiClientPool.Store(dbKey, DbObj{Client: client, DbName: cfg.Dbname, Pre: cfg.Pre})
 	}
+	// 注册服务退出信号，触发 mongoDb 连接关闭（优雅退出）
+	registerShutdownHook()
 }
 
 // connect 建立MongoDB连接
@@ -618,4 +624,45 @@ func (m *Db) clearData(isClearTx bool) {
 	if isClearTx {
 		m.TxSession = nil
 	}
+}
+
+// 注册服务退出钩子（监听信号，自动关闭 mongoDb 连接）
+func registerShutdownHook() {
+	sigCh := make(chan os.Signal, 1)
+	// 监听常见的退出信号：Ctrl+C、kill 命令
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+
+	go func() {
+		<-sigCh // 等待信号
+		fmt.Println("\n收到退出信号，开始关闭 Mysql 连接...")
+		if err := CloseMongoDb(); err != nil {
+			fmt.Printf("Mysql 连接关闭失败: %v\n", err)
+		} else {
+			fmt.Println("所有 Mysql 连接已关闭")
+		}
+		os.Exit(0)
+	}()
+}
+
+// CloseMongoDb 关闭所有 mongoDb 连接（供外部调用，如服务停止时）
+func CloseMongoDb() error {
+	var err error
+	multiClientPool.Range(func(key, value interface{}) bool {
+		dbObj, ok := value.(DbObj)
+		if !ok {
+			err = fmt.Errorf("无效的 mongoDb 客户端对象（key: %v）", key)
+			return false // 终止遍历
+		}
+		// 关闭客户端（会释放连接池中的所有连接）
+		disconnectCtx := context.Background()
+		if closeErr := dbObj.Client.Disconnect(disconnectCtx); closeErr != nil {
+			// 不建议 panic，用日志记录更优雅（避免程序异常退出）
+			err = fmt.Errorf("关闭 mongoDb 连接失败（dbKey: %v）: %w", key, closeErr)
+			// 继续遍历，尝试关闭其他连接
+			return true
+		}
+		fmt.Printf("mongoDb 连接已关闭（dbKey: %v）\n", key)
+		return true
+	})
+	return err
 }

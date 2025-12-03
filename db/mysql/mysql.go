@@ -9,9 +9,12 @@ import (
 	"github.com/dfpopp/go-dai/function"
 	"github.com/dfpopp/go-dai/logger"
 	"math"
+	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -48,19 +51,21 @@ func InitMySQL() {
 	for dbKey, cfg := range cfgMap {
 		db, err := sql.Open("mysql", cfg.User+":"+cfg.Pwd+"@tcp("+cfg.Host+":"+cfg.Port+")/"+cfg.Dbname+"?charset="+cfg.Charset)
 		if err != nil {
-			panic("MySQL连接失败: " + err.Error())
+			logger.Error("MySQL连接失败: " + err.Error())
+		} else {
+			// 设置连接池参数
+			db.SetMaxOpenConns(cfg.MaxOpenConnNum)
+			db.SetMaxIdleConns(cfg.MaxIdleConnNum)
+			db.SetConnMaxLifetime(time.Duration(cfg.ConnMaxLifetime) * time.Second) // 连接最长存活时间;mysql default conn timeout=8h, should < mysql_timeout
+			// 测试连接
+			if err := db.Ping(); err != nil {
+				logger.Error("MySQL Ping失败: " + err.Error())
+			}
+			multiDBPool.Store(dbKey, DbObj{Db: db, Pre: cfg.Pre})
 		}
-
-		// 设置连接池参数
-		db.SetMaxOpenConns(cfg.MaxOpenConnNum)
-		db.SetMaxIdleConns(cfg.MaxIdleConnNum)
-		db.SetConnMaxLifetime(time.Duration(cfg.ConnMaxLifetime) * time.Second) // 连接最长存活时间;mysql default conn timeout=8h, should < mysql_timeout
-		// 测试连接
-		if err := db.Ping(); err != nil {
-			panic("MySQL Ping失败: " + err.Error())
-		}
-		multiDBPool.Store(dbKey, DbObj{Db: db, Pre: cfg.Pre})
 	}
+	// 注册服务退出信号，触发 mysql 连接关闭（优雅退出）
+	registerShutdownHook()
 }
 func GetMysqlDB(dbKey string) (*MysqlDb, error) {
 	val, ok := multiDBPool.Load(dbKey)
@@ -728,4 +733,43 @@ func (db *MysqlDb) clearData(isClearTx bool) {
 	if isClearTx {
 		db.Tx = nil
 	}
+}
+
+// 注册服务退出钩子（监听信号，自动关闭 mysql 连接）
+func registerShutdownHook() {
+	sigCh := make(chan os.Signal, 1)
+	// 监听常见的退出信号：Ctrl+C、kill 命令
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+
+	go func() {
+		<-sigCh // 等待信号
+		fmt.Println("\n收到退出信号，开始关闭 Mysql 连接...")
+		if err := CloseMysql(); err != nil {
+			fmt.Printf("Mysql 连接关闭失败: %v\n", err)
+		} else {
+			fmt.Println("所有 Mysql 连接已关闭")
+		}
+		os.Exit(0)
+	}()
+}
+
+// CloseMysql 关闭所有 mysql 连接（供外部调用，如服务停止时）
+func CloseMysql() error {
+	var err error
+	multiDBPool.Range(func(key, value interface{}) bool {
+		dbObj, ok := value.(DbObj)
+		if !ok {
+			err = fmt.Errorf("无效的 mysql 客户端对象（key: %v）", key)
+			return false // 终止遍历
+		}
+		// 关闭客户端（会释放连接池中的所有连接）
+		if closeErr := dbObj.Db.Close(); closeErr != nil {
+			err = fmt.Errorf("关闭 mysql 连接失败（dbKey: %v）: %w", key, closeErr)
+			// 继续遍历，尝试关闭其他连接
+			return true
+		}
+		fmt.Printf("mysql 连接已关闭（dbKey: %v）\n", key)
+		return true
+	})
+	return err
 }
