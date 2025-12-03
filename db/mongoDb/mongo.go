@@ -83,7 +83,7 @@ func connect(cfg config.MongodbConfig) (*mongo.Client, error) {
 		cfg.MaxConnIdleTime = 300 //5分钟
 	}
 	if cfg.Timeout == 0 {
-		cfg.Timeout = 5 * time.Second
+		cfg.Timeout = 5
 	}
 	fmt.Printf(function.Json_encode(cfg))
 	// 构建连接URI
