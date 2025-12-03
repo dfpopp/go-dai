@@ -3,6 +3,7 @@ package redisDb
 import (
 	"fmt"
 	"github.com/dfpopp/go-dai/config"
+	"github.com/dfpopp/go-dai/function"
 	"github.com/go-redis/redis"
 	"os"
 	"os/signal"
@@ -27,6 +28,7 @@ type DbObj struct {
 // InitRedis 初始化Redis连接池
 func InitRedis() {
 	cfgMap := config.GetRedisConfig()
+	fmt.Println(function.Json_encode(cfgMap))
 	for dbKey, cfg := range cfgMap {
 		fmt.Println(dbKey)
 		if cfg.MinIdleConns < 2 {
