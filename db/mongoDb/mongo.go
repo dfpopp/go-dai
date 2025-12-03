@@ -352,11 +352,12 @@ func (m *Db) FindAll(ctx context.Context) *Db {
 		return m
 	}
 	if cursor == nil {
+
 		return m
 	}
 	defer func(cursor *mongo.Cursor, ctx context.Context) {
 		closeErr := cursor.Close(ctx)
-		if err != nil {
+		if closeErr != nil {
 			logger.Error("mongoDb 关闭结果集失败: %v", closeErr)
 		}
 	}(cursor, txCtx)
@@ -438,7 +439,7 @@ func (m *Db) Aggregate(ctx context.Context) *Db {
 	}
 	defer func(cursor *mongo.Cursor, ctx context.Context) {
 		closeErr := cursor.Close(ctx)
-		if err != nil {
+		if closeErr != nil {
 			logger.Error("mongoDb 关闭结果集失败: %v", closeErr)
 		}
 	}(cursor, txCtx)
