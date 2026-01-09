@@ -81,9 +81,11 @@ func Random(length int, is_digital bool) string {
 	return str
 }
 func InArray(needle string, haystack []string) bool {
-	for _, item := range haystack {
-		if item == needle {
-			return true
+	if len(haystack) > 0 {
+		for _, item := range haystack {
+			if item == needle {
+				return true
+			}
 		}
 	}
 	return false

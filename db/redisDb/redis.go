@@ -93,8 +93,6 @@ func InitRedis() {
 		}
 		multiDBPool.Store(dbKey, DbObj{Db: db, Pre: cfg.Pre})
 	}
-	// 注册服务退出信号，触发 Redis 连接关闭（优雅退出）
-	registerShutdownHook()
 }
 func GetRedisDB(dbKey string) (*RedisDb, error) {
 	val, ok := multiDBPool.Load(dbKey)
@@ -126,7 +124,6 @@ func registerShutdownHook() {
 		} else {
 			fmt.Println("所有 Redis 连接已关闭")
 		}
-		os.Exit(0)
 	}()
 }
 

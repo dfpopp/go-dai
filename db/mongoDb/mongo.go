@@ -59,8 +59,6 @@ func InitMongoDB() {
 			multiClientPool.Store(dbKey, DbObj{Client: client, DbName: cfg.Dbname, Pre: cfg.Pre})
 		}
 	}
-	// 注册服务退出信号，触发 mongoDb 连接关闭（优雅退出）
-	registerShutdownHook()
 }
 
 // connect 建立MongoDB连接
@@ -148,65 +146,65 @@ func GetMongoDB(dbKey string) (*Db, error) {
 		Err:           nil,
 	}, nil
 }
+func (m *Db) SetDbName(dbName string) *Db {
+	m.Db = m.Client.Database(dbName)
+	return m
+}
+func (m *Db) SetTablePre(dbPre string) *Db {
+	m.DbPre = dbPre
+	return m
+}
 
 // Begin 开启事务（需MongoDB副本集环境）
-func (m *Db) Begin(ctx context.Context) *Db {
+func (m *Db) Begin(ctx context.Context) error {
 	if m.Err != nil {
-		return m
+		return m.Err
 	}
 	if m.TxSession != nil {
-		return m
+		return nil
 	}
 	if m.Client == nil {
-		m.Err = errors.New("MongoDB客户端未初始化")
-		return m
+		return errors.New("MongoDB客户端未初始化")
 	}
 	// 开始一个事务的会话
 	sessionOpts := options.Session().SetDefaultReadPreference(readpref.Primary())
 	session, err := m.Client.StartSession(sessionOpts)
 	if err != nil {
-		m.Err = fmt.Errorf("开启事务失败: %v", err)
-		return m
+		return fmt.Errorf("开启事务失败: %v", err)
 	}
 	// 启动事务
 	if err = session.StartTransaction(); err != nil {
 		session.EndSession(ctx)
-		m.Err = fmt.Errorf("启动事务失败: %v", err)
-		return m
+		return fmt.Errorf("启动事务失败: %v", err)
 	}
 	m.TxSession = session
-	return m
+	return nil
 }
 
 // Commit 提交事务
-func (m *Db) Commit(ctx context.Context) *Db {
+func (m *Db) Commit(ctx context.Context) error {
 	defer m.clearData(true)
 	if m.TxSession == nil {
-		m.Err = errors.New("事务未开启")
-		return m
+		return errors.New("事务未开启")
 	}
+	defer m.TxSession.EndSession(ctx)
 	if err := m.TxSession.CommitTransaction(ctx); err != nil {
-		m.Err = fmt.Errorf("提交事务失败: %v", err)
-		return m
+		return fmt.Errorf("提交事务失败: %v", err)
 	}
-	m.TxSession.EndSession(ctx)
-	return m
+	return nil
 }
 
 // Rollback 回滚事务
-func (m *Db) Rollback(ctx context.Context) *Db {
+func (m *Db) Rollback(ctx context.Context) error {
 	defer m.clearData(true)
 	if m.TxSession == nil {
-		m.Err = errors.New("事务未开启")
-		return m
-	}
-	if err := m.TxSession.AbortTransaction(ctx); err != nil {
-		m.Err = fmt.Errorf("回滚事务失败: %v", err)
-	} else {
-		m.Err = nil
+		return errors.New("事务未开启")
 	}
 	m.TxSession.EndSession(ctx)
-	return m
+	if err := m.TxSession.AbortTransaction(ctx); err != nil {
+		return fmt.Errorf("回滚事务失败: %v", err)
+	}
+	return nil
 }
 
 // getTxContext 获取绑定会话的上下文（核心修正：替代SetSession）
@@ -337,6 +335,9 @@ func (m *Db) FindAll(ctx context.Context) *Db {
 	if m.Err != nil {
 		return m
 	}
+	if m.Db == nil {
+		return m
+	}
 	if m.Collection == "" {
 		m.Err = errors.New("未指定集合名")
 		return m
@@ -346,19 +347,16 @@ func (m *Db) FindAll(ctx context.Context) *Db {
 	// 获取绑定事务的上下文
 	txCtx := m.getTxContext(ctx)
 	// 执行查询
+	if m.Filter == nil {
+		m.Filter = bson.D{}
+	}
 	cursor, err := coll.Find(txCtx, m.Filter, m.FindOptions)
 	if err != nil {
 		m.Err = fmt.Errorf("查询失败: %v", err)
 		return m
 	}
 	if cursor == nil {
-		if m.Collection == "member_point" {
-			fmt.Printf("没有数据")
-		}
 		return m
-	}
-	if m.Collection == "member_point" {
-		fmt.Printf(">>>okkk")
 	}
 	defer func(cursor *mongo.Cursor, ctx context.Context) {
 		closeErr := cursor.Close(ctx)
@@ -366,9 +364,6 @@ func (m *Db) FindAll(ctx context.Context) *Db {
 			logger.Error("mongoDb 关闭结果集失败: %v", closeErr)
 		}
 	}(cursor, txCtx)
-	if m.Collection == "member_point" {
-		fmt.Printf("okkk")
-	}
 	// 解析结果
 	var result []map[string]interface{}
 	for cursor.Next(txCtx) {
@@ -377,26 +372,14 @@ func (m *Db) FindAll(ctx context.Context) *Db {
 			m.Err = fmt.Errorf("解析文档失败: %v", err)
 			return m
 		}
-		if m.Collection == "member_point" {
-			fmt.Printf("<<<<111")
-		}
 		result = append(result, doc)
-	}
-	if m.Collection == "member_point" {
-		fmt.Printf("<<<<okkk")
 	}
 	// 检查游标错误
 	if err := cursor.Err(); err != nil {
 		m.Err = fmt.Errorf("游标遍历失败: %v", err)
 		return m
 	}
-	if m.Collection == "member_point" {
-		fmt.Printf("<<<<2222")
-	}
 	m.Data = result
-	if m.Collection == "member_point" {
-		fmt.Printf("<<<<333")
-	}
 	return m
 }
 
@@ -411,6 +394,9 @@ func (m *Db) FindCount(ctx context.Context) (int64, error) {
 	}
 	coll := m.Db.Collection(m.Collection)
 	txCtx := m.getTxContext(ctx)
+	if m.Filter == nil {
+		m.Filter = bson.D{}
+	}
 	count, err := coll.CountDocuments(txCtx, m.Filter)
 	if err != nil {
 		m.Err = fmt.Errorf("计数失败: %v", err)
@@ -421,43 +407,14 @@ func (m *Db) FindCount(ctx context.Context) (int64, error) {
 
 // Find 执行查询，返回单条结果
 func (m *Db) Find(ctx context.Context) (string, error) {
-	fmt.Println("已进入find")
-	if m.Err != nil {
-		return "", m.Err
-	}
-	if m.Db == nil {
-		return "", errors.New("数据库资源不存在")
-	}
-	if m.Collection == "" {
-		return "", errors.New("未指定集合名")
-	}
-	fmt.Println(function.Json_encode(m))
-	if m.Collection == "member_point" {
-		fmt.Printf("<<<<0000")
-	}
 	defer m.clearData(false)
 	m.SetLimit(1)
-	if m.Collection == "member_point" {
-		fmt.Printf("<<<<0000")
-	}
 	m.FindAll(ctx)
-	if m.Collection == "member_point" {
-		fmt.Printf("<<<<66666")
-	}
 	if m.Err != nil {
 		return "", m.Err
 	}
-	if m.Collection == "member_point" {
-		fmt.Printf("<<<<777")
-	}
 	if len(m.Data) > 0 {
-		if m.Collection == "member_point" {
-			fmt.Printf("<<<<88888")
-		}
 		return function.Json_encode(m.Data[0]), nil
-	}
-	if m.Collection == "member_point" {
-		fmt.Printf("<<<<9999")
 	}
 	return "", nil
 }
@@ -563,7 +520,7 @@ func (m *Db) InsertAll(ctx context.Context, docs []interface{}) ([]interface{}, 
 }
 
 // Update 更新文档（默认更新多条）
-func (m *Db) Update(ctx context.Context, update bson.D) (int64, error) {
+func (m *Db) Update(ctx context.Context, update interface{}) (int64, error) {
 	defer m.clearData(false)
 	if m.Err != nil {
 		return 0, m.Err
@@ -571,8 +528,8 @@ func (m *Db) Update(ctx context.Context, update bson.D) (int64, error) {
 	if m.Collection == "" {
 		return 0, errors.New("未指定集合名")
 	}
-	if len(update) == 0 {
-		return 0, errors.New("更新条件不能为空")
+	if update == nil {
+		return 0, errors.New("数据不能为空")
 	}
 	if len(m.Filter) == 0 {
 		return 0, errors.New("查询条件不能为空（防止全表更新）")
@@ -590,7 +547,7 @@ func (m *Db) Update(ctx context.Context, update bson.D) (int64, error) {
 }
 
 // UpdateOne 更新单条文档
-func (m *Db) UpdateOne(ctx context.Context, update bson.D) (int64, error) {
+func (m *Db) UpdateOne(ctx context.Context, update interface{}) (int64, error) {
 	defer m.clearData(false)
 	if m.Err != nil {
 		return 0, m.Err
@@ -598,8 +555,8 @@ func (m *Db) UpdateOne(ctx context.Context, update bson.D) (int64, error) {
 	if m.Collection == "" {
 		return 0, errors.New("未指定集合名")
 	}
-	if len(update) == 0 {
-		return 0, errors.New("更新条件不能为空")
+	if update == nil {
+		return 0, errors.New("数据条件不能为空")
 	}
 	coll := m.Db.Collection(m.Collection)
 	txCtx := m.getTxContext(ctx)
@@ -674,13 +631,18 @@ func (m *Db) ToString() (string, error) {
 
 // clearData 清理查询数据和临时配置
 func (m *Db) clearData(isClearTx bool) {
+	// 初始化操作选项
+	findOpts := options.Find()
+	deleteOpts := options.Delete()
+	updateOpts := options.Update()
+	insertOpts := options.InsertMany()
 	m.Collection = ""
 	m.Filter = nil
 	m.AggregatePipe = nil
-	m.FindOptions = nil
-	m.DeleteOptions = nil
-	m.UpdateOptions = nil
-	m.InsertOptions = nil
+	m.FindOptions = findOpts
+	m.DeleteOptions = deleteOpts
+	m.UpdateOptions = updateOpts
+	m.InsertOptions = insertOpts
 	m.Sort = nil
 	m.Limit = 0
 	m.Skip = 0
@@ -700,11 +662,11 @@ func registerShutdownHook() {
 
 	go func() {
 		<-sigCh // 等待信号
-		fmt.Println("\n收到退出信号，开始关闭 Mysql 连接...")
+		fmt.Println("\n收到退出信号，开始关闭 mongoDb 连接...")
 		if err := CloseMongoDb(); err != nil {
-			fmt.Printf("Mysql 连接关闭失败: %v\n", err)
+			fmt.Printf("mongoDb 连接关闭失败: %v\n", err)
 		} else {
-			fmt.Println("所有 Mysql 连接已关闭")
+			fmt.Println("所有 mongoDb 连接已关闭")
 		}
 		os.Exit(0)
 	}()
@@ -714,6 +676,7 @@ func registerShutdownHook() {
 func CloseMongoDb() error {
 	var err error
 	multiClientPool.Range(func(key, value interface{}) bool {
+		fmt.Println(fmt.Errorf("mongoDb（key: %v）", key))
 		dbObj, ok := value.(DbObj)
 		if !ok {
 			err = fmt.Errorf("无效的 mongoDb 客户端对象（key: %v）", key)

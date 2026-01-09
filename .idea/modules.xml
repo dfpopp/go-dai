@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/merchantServer.iml" filepath="$PROJECT_DIR$/.idea/merchantServer.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/go-Dai.iml" filepath="$PROJECT_DIR$/.idea/go-Dai.iml" />
     </modules>
   </component>
 </project>

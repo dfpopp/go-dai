@@ -9,13 +9,10 @@ import (
 	"github.com/dfpopp/go-dai/function"
 	"github.com/dfpopp/go-dai/logger"
 	"math"
-	"os"
-	"os/signal"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -31,15 +28,15 @@ type MysqlDb struct {
 	DbPre          string //表前缀
 	Table          string
 	Alias          string
-	whereTemplates []string      // WHERE条件模板列表（如["id = ?", "status = ?"]）
-	whereArgs      []interface{} // WHERE条件参数列表（与模板一一对应）
+	WhereTemplates []string      // WHERE条件模板列表（如["id = ?", "status = ?"]）
+	WhereArgs      []interface{} // WHERE条件参数列表（与模板一一对应）
 	Order          string
 	Group          string
 	Field          string
 	RelationList   []string
 	Limit          string
 	Data           []map[string]interface{}
-	err            error
+	Err            error
 }
 type DbObj struct {
 	Db  *sql.DB // 复用全局数据库连接池
@@ -79,8 +76,6 @@ func InitMySQL() {
 			multiDBPool.Store(dbKey, DbObj{Db: db, Pre: cfg.Pre})
 		}
 	}
-	// 注册服务退出信号，触发 mysql 连接关闭（优雅退出）
-	registerShutdownHook()
 }
 func GetMysqlDB(dbKey string) (*MysqlDb, error) {
 	val, ok := multiDBPool.Load(dbKey)
@@ -98,18 +93,24 @@ func GetMysqlDB(dbKey string) (*MysqlDb, error) {
 		DbPre:          dbObj.Pre,
 		Table:          "",
 		Alias:          "",
-		whereTemplates: nil,
-		whereArgs:      nil,
+		WhereTemplates: nil,
+		WhereArgs:      nil,
 		Order:          "",
 		Group:          "",
 		Field:          "",
 		RelationList:   nil,
 		Limit:          "",
 		Data:           nil,
-		err:            nil,
+		Err:            nil,
 	}, nil
 }
 func (db *MysqlDb) ToBegin() error {
+	if db.Err != nil {
+		return db.Err
+	}
+	if db.Tx != nil {
+		return nil
+	}
 	if db.Db == nil {
 		return errors.New("数据库连接未初始化")
 	}
@@ -167,13 +168,13 @@ func (db *MysqlDb) SetWhere(tpl string, args ...interface{}) *MysqlDb {
 	dangerousKeywords := []string{"DROP", "ALTER", "TRUNCATE", "DELETE", "INSERT", "UPDATE", "EXEC"}
 	for _, kw := range dangerousKeywords {
 		if strings.Contains(strings.ToUpper(tpl), kw) {
-			db.err = fmt.Errorf("条件模板包含非法关键字：%s", kw)
+			db.Err = fmt.Errorf("条件模板包含非法关键字：%s", kw)
 			return db
 		}
 	}
 	// 将模板和参数加入列表
-	db.whereTemplates = append(db.whereTemplates, tpl)
-	db.whereArgs = append(db.whereArgs, args...)
+	db.WhereTemplates = append(db.WhereTemplates, tpl)
+	db.WhereArgs = append(db.WhereArgs, args...)
 	return db
 }
 func (db *MysqlDb) SetWhereOr(data map[string]interface{}) *MysqlDb {
@@ -188,8 +189,8 @@ func (db *MysqlDb) SetWhereOr(data map[string]interface{}) *MysqlDb {
 		}
 		// 生成等值模板：`field` = ?（加反引号防止字段名与关键字冲突）
 		tpl := fmt.Sprintf("`%s` = ?", field)
-		db.whereTemplates = append(db.whereTemplates, tpl)
-		db.whereArgs = append(db.whereArgs, value)
+		db.WhereTemplates = append(db.WhereTemplates, tpl)
+		db.WhereArgs = append(db.WhereArgs, value)
 	}
 	return db
 }
@@ -222,19 +223,19 @@ func (db *MysqlDb) SetLimit(skip int64, num int64) *MysqlDb {
 	return db
 }
 func (db *MysqlDb) FindAll(ctx context.Context) *MysqlDb {
-	if db.err != nil {
+	if db.Err != nil {
 		return db
 	}
 	if db.Db == nil {
-		db.err = errors.New("数据库连接未初始化")
+		db.Err = errors.New("数据库连接未初始化")
 		return db
 	}
 	if db.Table == "" {
-		db.err = errors.New("未指定表名")
+		db.Err = errors.New("未指定表名")
 		return db
 	} else {
-		if !isValidIdentifier(db.Table) {
-			db.err = errors.New("表名包含非法字符，存在注入风险")
+		if !isValidTable(db.Table) {
+			db.Err = fmt.Errorf("表名[%s]包含非法字符，存在注入风险", db.Table)
 			return db
 		}
 	}
@@ -242,16 +243,16 @@ func (db *MysqlDb) FindAll(ctx context.Context) *MysqlDb {
 		db.Field = "*"
 	} else {
 		// 校验字段合法性（防止字段注入）
-		if !isValidIdentifier(db.Field) {
-			db.err = errors.New("查询字段包含非法字符，存在注入风险")
+		if !isValidField(db.Field) {
+			db.Err = fmt.Errorf("查询字段[%s]包含非法字符，存在注入风险", db.Field)
 			return db
 		}
 	}
 	sqlStr := "SELECT " + db.Field + " FROM " + db.Table
 	if db.Alias != "" {
 		// 校验别名合法性
-		if !isValidIdentifier(db.Alias) {
-			db.err = errors.New("表别名包含非法字符，存在注入风险")
+		if !isValidTable(db.Alias) {
+			db.Err = fmt.Errorf("表别名[%s]包含非法字符，存在注入风险", db.Alias)
 			return db
 		}
 		sqlStr += " AS " + db.Alias
@@ -260,25 +261,31 @@ func (db *MysqlDb) FindAll(ctx context.Context) *MysqlDb {
 		for _, relation := range db.RelationList {
 			// 校验关联语句合法性
 			if !isValidRelation(relation) {
-				db.err = errors.New("关联语句[%s]格式非法，存在注入风险")
+				db.Err = fmt.Errorf("关联语句[%s]格式非法，存在注入风险", relation)
 				return db
 			}
 			sqlStr += " " + relation
 		}
 	}
-	if len(db.whereTemplates) > 0 {
-		sqlStr += " WHERE " + strings.Join(db.whereTemplates, " AND ")
+	if len(db.WhereTemplates) > 0 {
+		for _, tpl := range db.WhereTemplates {
+			if !isValidWhere(tpl) {
+				db.Err = fmt.Errorf("where子句[%s]格式非法，存在注入风险", tpl)
+				return db
+			}
+		}
+		sqlStr += " WHERE " + strings.Join(db.WhereTemplates, " AND ")
 	}
 	if db.Group != "" {
-		if !isValidIdentifier(db.Group) {
-			db.err = errors.New("GROUP BY字段包含非法字符，存在注入风险")
+		if !isValidGroup(db.Group) {
+			db.Err = fmt.Errorf("GROUP BY子句[%s]包含非法字符，存在注入风险", db.Group)
 			return db
 		}
 		sqlStr += " GROUP BY " + db.Group
 	}
 	if db.Order != "" {
-		if !isValidIdentifier(db.Order) {
-			db.err = errors.New("ORDER BY字段包含非法字符，存在注入风险")
+		if !isValidOrder(db.Order) {
+			db.Err = fmt.Errorf("ORDER BY子句[%s]包含非法字符，存在注入风险", db.Order)
 			return db
 		}
 		sqlStr += " ORDER BY " + db.Order
@@ -290,12 +297,12 @@ func (db *MysqlDb) FindAll(ctx context.Context) *MysqlDb {
 	var rows *sql.Rows
 	var err error
 	if db.Tx != nil {
-		rows, err = db.Tx.QueryContext(ctx, sqlStr, db.whereArgs...)
+		rows, err = db.Tx.QueryContext(ctx, sqlStr, db.WhereArgs...)
 	} else {
-		rows, err = db.Db.QueryContext(ctx, sqlStr, db.whereArgs...)
+		rows, err = db.Db.QueryContext(ctx, sqlStr, db.WhereArgs...)
 	}
 	if err != nil {
-		db.err = err
+		db.Err = err
 		return db
 	}
 	// 确保结果集关闭
@@ -308,7 +315,7 @@ func (db *MysqlDb) FindAll(ctx context.Context) *MysqlDb {
 	}()
 	cols, er := rows.Columns()
 	if er != nil {
-		db.err = er
+		db.Err = er
 		return db
 	}
 	// 构造列值的指针切片（用于Scan）
@@ -320,7 +327,7 @@ func (db *MysqlDb) FindAll(ctx context.Context) *MysqlDb {
 	var result []map[string]interface{}
 	for rows.Next() {
 		if err := rows.Scan(valPars...); err != nil {
-			db.err = err
+			db.Err = err
 			return db
 		}
 		// 构造map：列名→列值
@@ -337,7 +344,7 @@ func (db *MysqlDb) FindAll(ctx context.Context) *MysqlDb {
 	}
 	// 14. 检查遍历过程中的错误
 	if err := rows.Err(); err != nil {
-		db.err = fmt.Errorf("遍历结果集失败: %w", err)
+		db.Err = fmt.Errorf("遍历结果集失败: %w", err)
 		return db
 	}
 	db.Data = result
@@ -351,8 +358,8 @@ func (db *MysqlDb) FindCount(ctx context.Context) (int64, error) {
 	db.Field = "COUNT(*) AS count"
 	db.Limit = "1"
 	db.FindAll(ctx)
-	if db.err != nil {
-		return 0, db.err
+	if db.Err != nil {
+		return 0, db.Err
 	}
 	if len(db.Data) > 0 {
 		// 安全的类型转换：兼容常见数值类型，非数值类型直接返回错误
@@ -398,15 +405,15 @@ func (db *MysqlDb) Find(ctx context.Context) (string, error) {
 	}
 	db.Limit = "1"
 	db.FindAll(ctx)
-	if db.err != nil {
-		return "", db.err
+	if db.Err != nil {
+		return "", db.Err
 	}
 	if len(db.Data) > 0 {
 		return function.Json_encode(db.Data[0]), nil
 	}
 	return "", nil
 }
-func (db *MysqlDb) Insert(data map[string]interface{}) (int64, error) {
+func (db *MysqlDb) Insert(ctx context.Context, data map[string]interface{}) (int64, error) {
 	defer db.clearData(false)
 	if db.Db == nil {
 		return 0, errors.New("数据库连接池未初始化（mysql.Db为nil）")
@@ -418,7 +425,7 @@ func (db *MysqlDb) Insert(data map[string]interface{}) (int64, error) {
 	if db.Table == "" {
 		return 0, errors.New("未指定表名")
 	} else {
-		if !isValidIdentifier(db.Table) {
+		if !isValidTable(db.Table) {
 			return 0, errors.New("表名包含非法字符，存在注入风险")
 		}
 	}
@@ -442,9 +449,9 @@ func (db *MysqlDb) Insert(data map[string]interface{}) (int64, error) {
 	var result sql.Result
 	var err error
 	if db.Tx != nil {
-		result, err = db.Tx.Exec(sqlStr, values...)
+		result, err = db.Tx.ExecContext(ctx, sqlStr, values...)
 	} else {
-		result, err = db.Db.Exec(sqlStr, values...)
+		result, err = db.Db.ExecContext(ctx, sqlStr, values...)
 	}
 	if err != nil {
 		return 0, fmt.Errorf("执行插入SQL失败，SQL：%s，错误：%w", sqlStr, err)
@@ -456,7 +463,7 @@ func (db *MysqlDb) Insert(data map[string]interface{}) (int64, error) {
 	}
 	return id, nil
 }
-func (db *MysqlDb) InsertAll(dataList []map[string]interface{}) (int64, error) {
+func (db *MysqlDb) InsertAll(ctx context.Context, dataList []map[string]interface{}) (int64, error) {
 	defer db.clearData(false)
 	if db.Db == nil {
 		return 0, errors.New("数据库连接池未初始化（mysql.Db为nil）")
@@ -468,7 +475,7 @@ func (db *MysqlDb) InsertAll(dataList []map[string]interface{}) (int64, error) {
 	if db.Table == "" {
 		return 0, errors.New("未指定表名")
 	} else {
-		if !isValidIdentifier(db.Table) {
+		if !isValidTable(db.Table) {
 			return 0, errors.New("表名包含非法字符，存在注入风险")
 		}
 	}
@@ -485,7 +492,7 @@ func (db *MysqlDb) InsertAll(dataList []map[string]interface{}) (int64, error) {
 	// 遍历第一条数据，初始化字段名和单条占位符
 	for key := range firstData {
 		// 字段名合法性校验（可选，增强安全性）
-		if !isValidIdentifier(key) {
+		if !isValidField(key) {
 			return 0, fmt.Errorf("字段名[%s]包含非法字符，存在注入风险", key)
 		}
 		fields = append(fields, fmt.Sprintf("`%s`", key))
@@ -529,9 +536,9 @@ func (db *MysqlDb) InsertAll(dataList []map[string]interface{}) (int64, error) {
 	var result sql.Result
 	var err error
 	if db.Tx != nil {
-		result, err = db.Tx.Exec(sqlStr, allValues...)
+		result, err = db.Tx.ExecContext(ctx, sqlStr, allValues...)
 	} else {
-		result, err = db.Db.Exec(sqlStr, allValues...)
+		result, err = db.Db.ExecContext(ctx, sqlStr, allValues...)
 	}
 	if err != nil {
 		return 0, fmt.Errorf("执行批量SQL失败，SQL：%s，错误：%w", sqlStr, err)
@@ -543,7 +550,7 @@ func (db *MysqlDb) InsertAll(dataList []map[string]interface{}) (int64, error) {
 	}
 	return rowsAffected, nil
 }
-func (db *MysqlDb) Update(data map[string]interface{}) (int64, error) {
+func (db *MysqlDb) Update(ctx context.Context, data map[string]interface{}) (int64, error) {
 	defer db.clearData(false)
 	if db.Db == nil {
 		return 0, errors.New("数据库连接池未初始化（mysql.Db为nil）")
@@ -555,7 +562,7 @@ func (db *MysqlDb) Update(data map[string]interface{}) (int64, error) {
 	if db.Table == "" {
 		return 0, errors.New("未指定表名")
 	} else {
-		if !isValidIdentifier(db.Table) {
+		if !isValidTable(db.Table) {
 			return 0, errors.New("表名包含非法字符，存在注入风险")
 		}
 	}
@@ -565,7 +572,7 @@ func (db *MysqlDb) Update(data map[string]interface{}) (int64, error) {
 		values     []interface{} // 存储所有参数值（SET + WHERE）
 	)
 	for key, value := range data {
-		if !isValidIdentifier(key) {
+		if !isValidField(key) {
 			return 0, fmt.Errorf("更新字段[%s]包含非法字符，存在注入风险", key)
 		}
 		setClauses = append(setClauses, fmt.Sprintf("`%s`=?", key))
@@ -574,11 +581,11 @@ func (db *MysqlDb) Update(data map[string]interface{}) (int64, error) {
 	setSQL := strings.Join(setClauses, ", ")
 	// 4. 拼接最终SQL
 	sqlStr := fmt.Sprintf("UPDATE `%s` SET %s", db.Table, setSQL)
-	if len(db.whereTemplates) > 0 {
-		sqlStr += " WHERE " + strings.Join(db.whereTemplates, " AND ")
+	if len(db.WhereTemplates) > 0 {
+		sqlStr += " WHERE " + strings.Join(db.WhereTemplates, " AND ")
 	}
-	if len(db.whereArgs) > 0 {
-		for _, arg := range db.whereArgs {
+	if len(db.WhereArgs) > 0 {
+		for _, arg := range db.WhereArgs {
 			values = append(values, arg)
 		}
 	}
@@ -586,9 +593,111 @@ func (db *MysqlDb) Update(data map[string]interface{}) (int64, error) {
 	var result sql.Result
 	var err error
 	if db.Tx != nil {
-		result, err = db.Tx.Exec(sqlStr, values...)
+		result, err = db.Tx.ExecContext(ctx, sqlStr, values...)
 	} else {
-		result, err = db.Db.Exec(sqlStr, values...)
+		result, err = db.Db.ExecContext(ctx, sqlStr, values...)
+	}
+	if err != nil {
+		// 包装错误，保留原始错误链和SQL信息（便于调试）
+		return 0, fmt.Errorf("执行更新SQL失败，SQL：%s，错误：%w", sqlStr, err)
+	}
+	// 获取受影响的行数（批量插入时，LastInsertId仅返回第一条数据的自增ID，需注意）
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("获取受影响行数失败：%w", err)
+	}
+	return rowsAffected, nil
+}
+func (db *MysqlDb) SetInc(ctx context.Context, tpl string, step ...int) (int64, error) {
+	defer db.clearData(false)
+	if db.Db == nil {
+		return 0, errors.New("数据库连接池未初始化（mysql.Db为nil）")
+	}
+	if db.Table == "" {
+		return 0, errors.New("未指定表名")
+	} else {
+		if !isValidTable(db.Table) {
+			return 0, errors.New("表名包含非法字符，存在注入风险")
+		}
+	}
+	if tpl == "" {
+		return 0, errors.New("未指定更新的字段")
+	} else {
+		if !isValidInc(tpl) {
+			return 0, fmt.Errorf("set子句[%s]包含非法字符，存在注入风险", tpl)
+		}
+	}
+	// 2. 构建SET子句：参数化赋值（如 `name`=?, `age`=?）
+	var (
+		values []interface{} // 存储所有参数值（SET + WHERE）
+	)
+	for _, value := range step {
+		values = append(values, value)
+	}
+	setSQL := tpl
+	// 4. 拼接最终SQL
+	sqlStr := fmt.Sprintf("UPDATE `%s` SET %s", db.Table, setSQL)
+	if len(db.WhereTemplates) > 0 {
+		sqlStr += " WHERE " + strings.Join(db.WhereTemplates, " AND ")
+	}
+	if len(db.WhereArgs) > 0 {
+		for _, arg := range db.WhereArgs {
+			values = append(values, arg)
+		}
+	}
+	// 5. 执行SQL并处理错误
+	var result sql.Result
+	var err error
+	if db.Tx != nil {
+		result, err = db.Tx.ExecContext(ctx, sqlStr, values...)
+	} else {
+		result, err = db.Db.ExecContext(ctx, sqlStr, values...)
+	}
+	if err != nil {
+		// 包装错误，保留原始错误链和SQL信息（便于调试）
+		return 0, fmt.Errorf("执行更新SQL失败，SQL：%s，错误：%w", sqlStr, err)
+	}
+	// 获取受影响的行数（批量插入时，LastInsertId仅返回第一条数据的自增ID，需注意）
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("获取受影响行数失败：%w", err)
+	}
+	return rowsAffected, nil
+}
+func (db *MysqlDb) Delete(ctx context.Context) (int64, error) {
+	defer db.clearData(false)
+	if db.Err != nil {
+		return 0, db.Err
+	}
+	if db.Db == nil {
+		return 0, errors.New("数据库连接未初始化")
+	}
+	if db.Table == "" {
+		return 0, errors.New("未指定表名")
+	} else {
+		if !isValidTable(db.Table) {
+			return 0, fmt.Errorf("表名[%s]包含非法字符，存在注入风险", db.Table)
+		}
+	}
+	sqlStr := "DELETE FROM " + db.Table
+	if len(db.WhereTemplates) > 0 {
+		for _, tpl := range db.WhereTemplates {
+			if !isValidWhere(tpl) {
+				return 0, fmt.Errorf("where子句[%s]格式非法，存在注入风险", tpl)
+			}
+		}
+		sqlStr += " WHERE " + strings.Join(db.WhereTemplates, " AND ")
+	}
+	if db.Limit != "" {
+		// 校验LIMIT格式（仅允许数字和逗号）
+		sqlStr += " LIMIT " + db.Limit
+	}
+	var result sql.Result
+	var err error
+	if db.Tx != nil {
+		result, err = db.Tx.ExecContext(ctx, sqlStr, db.WhereArgs...)
+	} else {
+		result, err = db.Db.ExecContext(ctx, sqlStr, db.WhereArgs...)
 	}
 	if err != nil {
 		// 包装错误，保留原始错误链和SQL信息（便于调试）
@@ -603,7 +712,7 @@ func (db *MysqlDb) Update(data map[string]interface{}) (int64, error) {
 }
 
 // Exec 执行sql语句，该方法不要依赖用户提交数据，仅执行一些特殊的SQL语句保证sqlStr是绝对安全的，不存在注入等情况
-func (db *MysqlDb) Exec(sqlStr string) (int64, error) {
+func (db *MysqlDb) Exec(ctx context.Context, sqlStr string, values ...interface{}) (int64, error) {
 	if db.Db == nil {
 		return 0, errors.New("数据库连接池未初始化（mysql.Db为nil）")
 	}
@@ -615,9 +724,9 @@ func (db *MysqlDb) Exec(sqlStr string) (int64, error) {
 	var result sql.Result
 	var err error
 	if db.Tx != nil {
-		result, err = db.Tx.Exec(sqlStr)
+		result, err = db.Tx.ExecContext(ctx, sqlStr, values...)
 	} else {
-		result, err = db.Db.Exec(sqlStr)
+		result, err = db.Db.ExecContext(ctx, sqlStr, values...)
 	}
 	if err != nil {
 		// 包装错误，保留原始错误链和SQL信息（便于调试）
@@ -647,16 +756,16 @@ func (db *MysqlDb) Exec(sqlStr string) (int64, error) {
 func BatchUpdateCaseWhen(table string, pk string, fields []string, dataList map[string]interface{}) (string, error) {
 	// 1. 基础合法性校验
 	// 表名合法性
-	if !isValidIdentifier(table) {
+	if !isValidTable(table) {
 		return "", fmt.Errorf("表名[%s]包含非法字符，仅允许字母、数字、下划线，且以字母开头", table)
 	}
 	// 主键合法性
-	if !isValidIdentifier(pk) {
+	if !isValidField(pk) {
 		return "", fmt.Errorf("主键[%s]包含非法字符，仅允许字母、数字、下划线，且以字母开头", pk)
 	}
 	// 字段合法性
 	for _, field := range fields {
-		if !isValidIdentifier(field) {
+		if !isValidField(field) {
 			return "", fmt.Errorf("字段[%s]包含非法字符，仅允许字母、数字、下划线，且以字母开头", field)
 		}
 	}
@@ -728,8 +837,8 @@ func BatchUpdateCaseWhen(table string, pk string, fields []string, dataList map[
 }
 func (db *MysqlDb) ToString() (string, error) {
 	defer db.clearData(false)
-	if db.err != nil {
-		return "", db.err
+	if db.Err != nil {
+		return "", db.Err
 	}
 	if len(db.Data) == 0 {
 		return "", nil
@@ -740,35 +849,17 @@ func (db *MysqlDb) clearData(isClearTx bool) {
 	db.Data = nil
 	db.Table = ""
 	db.Alias = ""
-	db.whereTemplates = nil
-	db.whereArgs = nil
+	db.WhereTemplates = nil
+	db.WhereArgs = nil
 	db.Order = ""
 	db.Group = ""
 	db.Field = ""
 	db.RelationList = nil
 	db.Limit = ""
-	db.err = nil
+	db.Err = nil
 	if isClearTx {
 		db.Tx = nil
 	}
-}
-
-// 注册服务退出钩子（监听信号，自动关闭 mysql 连接）
-func registerShutdownHook() {
-	sigCh := make(chan os.Signal, 1)
-	// 监听常见的退出信号：Ctrl+C、kill 命令
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
-
-	go func() {
-		<-sigCh // 等待信号
-		fmt.Println("\n收到退出信号，开始关闭 Mysql 连接...")
-		if err := CloseMysql(); err != nil {
-			fmt.Printf("Mysql 连接关闭失败: %v\n", err)
-		} else {
-			fmt.Println("所有 Mysql 连接已关闭")
-		}
-		os.Exit(0)
-	}()
 }
 
 // CloseMysql 关闭所有 mysql 连接（供外部调用，如服务停止时）

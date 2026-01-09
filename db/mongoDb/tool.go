@@ -2,6 +2,7 @@ package mongoDb
 
 import (
 	"fmt"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
@@ -25,4 +26,15 @@ func IdToObjectID(id string) (primitive.ObjectID, error) {
 // ObjectIDToString ObjectID转字符串
 func ObjectIDToString(oid primitive.ObjectID) string {
 	return oid.Hex()
+}
+func MapToBsonD(sdata map[string]interface{}) bson.D {
+	tdata := bson.D{}
+	keys := make([]string, 0)
+	for key, _ := range sdata {
+		keys = append(keys, key)
+	}
+	for _, key := range keys {
+		tdata = append(tdata, bson.E{Key: key, Value: sdata[key]})
+	}
+	return tdata
 }
