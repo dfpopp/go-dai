@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"go.mongodb.org/mongo-driver/bson"
 	"golang.org/x/text/encoding/simplifiedchinese"
 	"golang.org/x/text/encoding/traditionalchinese"
@@ -249,15 +248,16 @@ func FloatVal(str string) string {
 	}
 }
 func Json_encode(data interface{}) string {
-	jsondata, er := json.Marshal(data)
+	jsonData, er := json.Marshal(data)
 	if er != nil {
-		fmt.Println(er.Error())
 		return ""
 	}
-	jsondata = bytes.Replace(jsondata, []byte("\\u0026"), []byte("&"), -1)
-	jsondata = bytes.Replace(jsondata, []byte("\\u003c"), []byte("<"), -1)
-	jsondata = bytes.Replace(jsondata, []byte("\\u003e"), []byte(">"), -1)
-	return string(jsondata)
+	jsonData = bytes.Replace(jsonData, []byte("\\u0026"), []byte("&"), -1)
+	jsonData = bytes.Replace(jsonData, []byte("\\u003c"), []byte("<"), -1)
+	jsonData = bytes.Replace(jsonData, []byte("\\u003e"), []byte(">"), -1)
+	jsonData = bytes.Replace(jsonData, []byte(`\<`), []byte(`<`), -1)
+	jsonData = bytes.Replace(jsonData, []byte(`\>`), []byte(`>`), -1)
+	return string(jsonData)
 }
 func StrToValidUtf8(str string) string {
 	newStr := ""

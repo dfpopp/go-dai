@@ -6,9 +6,29 @@ import (
 )
 
 var validTableRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$`)
-var validFieldRegex = regexp.MustCompile(`^(?:(?:COUNT|SUM|AVG|MIN|MAX|COUNT_DISTINCT|STDDEV|VARIANCE|MEDIAN|GROUP_CONCAT|STRING_AGG|DATE_TRUNC|DATE_PART|BIT_AND|BIT_OR|BIT_XOR)\((?:DISTINCT\s+)?(?:\*|[a-zA-Z_][a-zA-Z0-9_.]*)\)|(?:CONCAT|CONCAT_WS|TRIM|SUBSTRING|LOWER|UPPER|IF|COALESCE|ABS|ROUND|DATE_FORMAT)\((?:\s*(?:[a-zA-Z_][a-zA-Z0-9_.]*|\?)\s*,?)*\)|[a-zA-Z_][a-zA-Z0-9_.]*)(?:\s+AS\s+[a-zA-Z_][a-zA-Z0-9_]*)?$`)
-var validWhereRegex = regexp.MustCompile(`^(?:\s*(?:\(\s*)?[a-zA-Z_][a-zA-Z0-9_.]*\s*[=!<>]=?\s*(?:\?|%[a-zA-Z0-9_%]*%)\s*(?:AND|OR|NOT)\s*(?:\)\s*)?)*\s*(?:\(\s*)?[a-zA-Z_][a-zA-Z0-9_.]*\s*[=!<>]=?\s*(?:\?|%[a-zA-Z0-9_%]*%)\s*(?:(?:AND|OR|NOT)\s*(?:\(\s*)?[a-zA-Z_][a-zA-Z0-9_.]*\s*[=!<>]=?\s*(?:\?|%[a-zA-Z0-9_%]*%)\s*(?:\)\s*)?)*\s*(?:\)\s*)?$`)
-var validOrderRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\s+(asc|ASC|desc|DESC))?(,\s*[a-zA-Z_][a-zA-Z0-9_]*(\s+(asc|ASC|desc|DESC))?)*$`)
+
+// var validFieldRegex = regexp.MustCompile(`^(?:(?:COUNT|SUM|AVG|MIN|MAX|COUNT_DISTINCT|STDDEV|VARIANCE|MEDIAN|GROUP_CONCAT|STRING_AGG|DATE_TRUNC|DATE_PART|BIT_AND|BIT_OR|BIT_XOR)\((?:DISTINCT\s+)?(?:\*|[a-zA-Z_][a-zA-Z0-9_.]*)\)|(?:CONCAT|CONCAT_WS|TRIM|SUBSTRING|LOWER|UPPER|IF|COALESCE|ABS|ROUND|DATE_FORMAT)\((?:\s*(?:[a-zA-Z_][a-zA-Z0-9_.]*|\?)\s*,?)*\)|[a-zA-Z_][a-zA-Z0-9_.]*)(?:\s+AS\s+[a-zA-Z_][a-zA-Z0-9_]*)?$`)
+var validFieldRegex = regexp.MustCompile(`(?i)(?:
+	# 第一部分：注入风险特征（匹配到即非法）
+	\b(UNION|SELECT|INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|REPLACE|EXEC|EXECUTE)\b|  # 危险关键字
+	--|/\*|\*/|#|                                                                   # 注释符
+	;|                                                                              # 语句分隔符
+	\bOR\s+1\s*=|\bAND\s+1\s*=|                                                     # 万能密码注入
+	\bWHERE\b|\bFROM\b|\bJOIN\b|                                                    # 非法子句关键字
+	# 第二部分：非法字符（匹配到即非法，仅允许[\w\s().,'"]）
+	[^a-zA-Z0-9_\s().,'"]
+)`)
+var validWhereRegex = regexp.MustCompile(`(?i)
+    (?:--|#|;|\|\|)                          # 注释符、分号、管道符（终止语句/拼接）
+    |(?:UNION\s+ALL\s+SELECT|UNION\s+SELECT) # UNION注入
+    |(?:INSERT\s+INTO|UPDATE\s+|DELETE\s+FROM|DROP\s+|ALTER\s+|TRUNCATE\s+) # 危险操作
+    |(?:EXEC\s+|XP_|\s+OR\s+\d+\s*=\s*\d+|AND\s+\d+\s*=\s*\d+) # 逻辑注入/执行命令
+    |(?:CHAR\s*\(|ASCII\s*\(|CONCAT\s*\(|GROUP_CONCAT\s*\()    # 字符拼接函数
+    |(?:SELECT\s+.+?\s+FROM\s+.+?)          # 嵌套查询
+    |(?:['"]).*?['"]                        # 单双引号（参数化查询不应出现）
+    |(?:\$\{|\}\$)                          # 模板注入
+`)
+var validOrderRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*(\s+(asc|ASC|desc|DESC))?(,\s*[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*(\s+(asc|ASC|desc|DESC))?)*$`)
 var validGroupRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?(,\s*[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?)*$`)
 var validIncRegex = regexp.MustCompile(`^[a-zA-Z0-9_=?+\-\s]+(\.[a-zA-Z0-9_=?+\-\s]+)?$`)
 
@@ -36,7 +56,7 @@ func isValidField(s string) bool {
 		if f == "" {
 			continue
 		}
-		if !validFieldRegex.MatchString(f) {
+		if validFieldRegex.MatchString(f) {
 			return false
 		}
 	}
@@ -48,10 +68,11 @@ func isValidWhere(s string) bool {
 	if s == "" { // 空表达式合法（无WHERE子句）
 		return true
 	}
-	s = regexp.MustCompile(`\s+`).ReplaceAllString(s, " ")
+	// 预处理：移除多余空格，统一为大写（方便匹配）
 	s = strings.TrimSpace(s)
+	s = strings.ToUpper(s)
 	// 正则校验
-	return validWhereRegex.MatchString(s)
+	return !validWhereRegex.MatchString(s)
 }
 
 // 校验order条件是否为合法标识符（防止注入）

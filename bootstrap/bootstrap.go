@@ -12,6 +12,8 @@ import (
 	"github.com/dfpopp/go-dai/websocket"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"runtime"
 	"sync"
 	"syscall"
 )
@@ -44,6 +46,11 @@ type BootContext struct {
 
 // Boot 统一服务启动入口
 func Boot(cfg *BootConfig) (*BootContext, error) {
+	appPath := ""
+	_, entryFile, _, ok := runtime.Caller(1)
+	if ok {
+		appPath = filepath.Dir(entryFile)
+	}
 	// 1. 校验配置
 	if cfg.AppName == "" || cfg.AppConfigPath == "" || cfg.DatabaseConfigPath == "" || len(cfg.EnableServices) == 0 || cfg.Router == nil {
 		return nil, fmt.Errorf("启动配置不完整，请检查必填参数")
@@ -57,7 +64,7 @@ func Boot(cfg *BootConfig) (*BootContext, error) {
 		return nil, fmt.Errorf("加载数据库配置失败: %v", err)
 	}
 	// 3. 初始化日志
-	if err := logger.InitLogger(cfg.AppName); err != nil {
+	if err := logger.InitLogger(cfg.AppName, appPath); err != nil {
 		return nil, fmt.Errorf("初始化日志失败: %v", err)
 	}
 
@@ -95,7 +102,7 @@ func Boot(cfg *BootConfig) (*BootContext, error) {
 			go func() {
 				defer wg.Done()
 				if err := bootCtx.HTTPServer.Run(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-					logger.Error("HTTP服务启动失败: %v", err)
+					logger.Error(fmt.Errorf("HTTP服务启动失败: %v", err))
 				}
 			}()
 			logger.Info("HTTP服务已初始化，监听地址：", bootCtx.HTTPServer.Config().Addr)
@@ -109,7 +116,7 @@ func Boot(cfg *BootConfig) (*BootContext, error) {
 			go func() {
 				defer wg.Done()
 				if err := bootCtx.WSServer.Run(); err != nil && !errors.Is(err, websocket.ErrServerClosed) {
-					logger.Error("WebSocket服务启动失败: %v", err)
+					logger.Error(fmt.Errorf("WebSocket服务启动失败: %v", err))
 				}
 			}()
 			logger.Info("WebSocket服务已初始化，监听地址：", bootCtx.WSServer.Config().Addr)
@@ -123,7 +130,7 @@ func Boot(cfg *BootConfig) (*BootContext, error) {
 			go func() {
 				defer wg.Done()
 				if err := bootCtx.GRPCServer.Run(); err != nil {
-					logger.Error("gRPC服务启动失败: %v", err)
+					logger.Error(fmt.Errorf("gRPC服务启动失败: %v", err))
 				}
 			}()
 			logger.Info("gRPC服务已初始化，监听地址：", bootCtx.GRPCServer.Config().Addr)
@@ -158,4 +165,54 @@ func Boot(cfg *BootConfig) (*BootContext, error) {
 	// 等待所有服务启动完成
 	wg.Wait()
 	return bootCtx, nil
+}
+func BootCron(cfg *BootConfig) error {
+	appPath := ""
+	_, entryFile, _, ok := runtime.Caller(1)
+	if ok {
+		appPath = filepath.Dir(entryFile)
+	}
+	// 1. 校验配置
+	if cfg.AppName == "" || cfg.AppConfigPath == "" || cfg.DatabaseConfigPath == "" {
+		return fmt.Errorf("启动配置不完整，请检查必填参数")
+	}
+
+	// 2. 加载配置
+	if err := config.LoadAppConfig(cfg.AppConfigPath, cfg.AppName); err != nil {
+		return fmt.Errorf("加载应用配置失败: %v", err)
+	}
+	if err := config.LoadDatabaseConfig(cfg.DatabaseConfigPath); err != nil {
+		return fmt.Errorf("加载数据库配置失败: %v", err)
+	}
+	// 3. 初始化日志
+	if err := logger.InitLogger(cfg.AppName, appPath); err != nil {
+		return fmt.Errorf("初始化日志失败: %v", err)
+	}
+
+	// 4. 初始化数据库
+	startDb := make([]string, 0)
+	if len(config.DbConfig.MySQL) > 0 {
+		startDb = append(startDb, "mysql")
+	}
+	if len(config.DbConfig.Mongodb) > 0 {
+		startDb = append(startDb, "mongodb")
+	}
+	if len(config.DbConfig.Redis) > 0 {
+		startDb = append(startDb, "redis")
+	}
+	if len(config.DbConfig.Es) > 0 {
+		startDb = append(startDb, "es")
+	}
+	if len(startDb) > 0 {
+		db.StartDb(startDb)
+	}
+	// 6. 优雅停机监听
+	go func() {
+		quit := make(chan os.Signal, 1)
+		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+		<-quit
+		logger.Info("应用开始优雅停机...")
+		logger.Info("应用已完成停机")
+	}()
+	return nil
 }

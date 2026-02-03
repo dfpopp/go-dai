@@ -194,15 +194,42 @@ func (db *MysqlDb) SetWhereOr(data map[string]interface{}) *MysqlDb {
 	}
 	return db
 }
+func (db *MysqlDb) SetWhereIn(field string, args ...interface{}) *MysqlDb {
+	// 空值校验：模板为空则直接返回
+	field = strings.TrimSpace(field)
+	if field == "" {
+		return db
+	}
+	tpl := strings.Repeat("?,", len(args))
+	tpl = strings.TrimSuffix(tpl, ",") // 去掉最后一个逗号
+	tpl = field + " IN (" + tpl + ")"
+	// 将模板和参数加入列表
+	db.WhereTemplates = append(db.WhereTemplates, tpl)
+	db.WhereArgs = append(db.WhereArgs, args...)
+	return db
+}
 func (db *MysqlDb) SetOrder(order string) *MysqlDb {
 	db.Order = order
+	return db
+}
+func (db *MysqlDb) SetGroup(group string) *MysqlDb {
+	db.Group = group
 	return db
 }
 func (db *MysqlDb) SetJoin(tableName string, condition string, joinType string) *MysqlDb {
 	if joinType == "" {
 		joinType = "LEFT"
 	}
-	db.RelationList = append(db.RelationList, joinType+" JOIN "+tableName+" ON "+condition)
+	tableList := strings.Split(strings.TrimSpace(tableName), " ")
+	tableName = tableList[0]
+	alias := tableName
+	if len(tableList) > 2 {
+		db.Err = errors.New("SetJoin方法中tableName参数中间包含了多个空格")
+	}
+	if len(tableList) == 2 {
+		alias = tableList[1]
+	}
+	db.RelationList = append(db.RelationList, strings.ToUpper(joinType)+" JOIN "+db.DbPre+tableName+" AS "+alias+" ON "+condition)
 	return db
 }
 func (db *MysqlDb) SetLimit(skip int64, num int64) *MysqlDb {
@@ -293,6 +320,8 @@ func (db *MysqlDb) FindAll(ctx context.Context) *MysqlDb {
 	if db.Limit != "" {
 		// 校验LIMIT格式（仅允许数字和逗号）
 		sqlStr += " LIMIT " + db.Limit
+	} else {
+		sqlStr += " LIMIT 500"
 	}
 	var rows *sql.Rows
 	var err error
@@ -302,7 +331,7 @@ func (db *MysqlDb) FindAll(ctx context.Context) *MysqlDb {
 		rows, err = db.Db.QueryContext(ctx, sqlStr, db.WhereArgs...)
 	}
 	if err != nil {
-		db.Err = err
+		db.Err = fmt.Errorf("SQL语句:%s，values:%s,查询失败，失败原因[%s]", sqlStr, function.Json_encode(db.WhereArgs), err.Error())
 		return db
 	}
 	// 确保结果集关闭
@@ -454,7 +483,7 @@ func (db *MysqlDb) Insert(ctx context.Context, data map[string]interface{}) (int
 		result, err = db.Db.ExecContext(ctx, sqlStr, values...)
 	}
 	if err != nil {
-		return 0, fmt.Errorf("执行插入SQL失败，SQL：%s，错误：%w", sqlStr, err)
+		return 0, fmt.Errorf("执行插入SQL失败，SQL：%s，values:%s,错误：%w", sqlStr, function.Json_encode(values), err)
 	}
 	// 获取自增ID
 	id, err := result.LastInsertId()
@@ -541,7 +570,7 @@ func (db *MysqlDb) InsertAll(ctx context.Context, dataList []map[string]interfac
 		result, err = db.Db.ExecContext(ctx, sqlStr, allValues...)
 	}
 	if err != nil {
-		return 0, fmt.Errorf("执行批量SQL失败，SQL：%s，错误：%w", sqlStr, err)
+		return 0, fmt.Errorf("执行批量SQL失败，SQL：%s，values:%s,错误：%w", sqlStr, function.Json_encode(allValues), err)
 	}
 	// 获取受影响的行数（批量插入时，LastInsertId仅返回第一条数据的自增ID，需注意）
 	rowsAffected, err := result.RowsAffected()
@@ -599,7 +628,7 @@ func (db *MysqlDb) Update(ctx context.Context, data map[string]interface{}) (int
 	}
 	if err != nil {
 		// 包装错误，保留原始错误链和SQL信息（便于调试）
-		return 0, fmt.Errorf("执行更新SQL失败，SQL：%s，错误：%w", sqlStr, err)
+		return 0, fmt.Errorf("执行更新SQL失败，SQL：%s，values:%s,错误：%w", sqlStr, function.Json_encode(values), err)
 	}
 	// 获取受影响的行数（批量插入时，LastInsertId仅返回第一条数据的自增ID，需注意）
 	rowsAffected, err := result.RowsAffected()
@@ -608,6 +637,53 @@ func (db *MysqlDb) Update(ctx context.Context, data map[string]interface{}) (int
 	}
 	return rowsAffected, nil
 }
+func (db *MysqlDb) UpdateBySet(ctx context.Context, setTpl string, values ...interface{}) (int64, error) {
+	defer db.clearData(false)
+	if db.Db == nil {
+		return 0, errors.New("数据库连接池未初始化（mysql.Db为nil）")
+	}
+	// 空数据校验
+	if setTpl == "" {
+		return 0, errors.New("update SET表达式不能为空")
+	}
+	if db.Table == "" {
+		return 0, errors.New("未指定表名")
+	} else {
+		if !isValidTable(db.Table) {
+			return 0, errors.New("表名包含非法字符，存在注入风险")
+		}
+	}
+	// 4. 拼接最终SQL
+	sqlStr := fmt.Sprintf("UPDATE `%s` SET %s", db.Table, setTpl)
+	if len(db.WhereTemplates) > 0 {
+		sqlStr += " WHERE " + strings.Join(db.WhereTemplates, " AND ")
+	}
+	if len(db.WhereArgs) > 0 {
+		for _, arg := range db.WhereArgs {
+			values = append(values, arg)
+		}
+	}
+	// 5. 执行SQL并处理错误
+	var result sql.Result
+	var err error
+	if db.Tx != nil {
+		result, err = db.Tx.ExecContext(ctx, sqlStr, values...)
+	} else {
+		result, err = db.Db.ExecContext(ctx, sqlStr, values...)
+	}
+	if err != nil {
+		// 包装错误，保留原始错误链和SQL信息（便于调试）
+		return 0, fmt.Errorf("执行更新SQL失败，SQL：%s，values:%s,错误：%w", sqlStr, function.Json_encode(values), err)
+	}
+	// 获取受影响的行数（批量插入时，LastInsertId仅返回第一条数据的自增ID，需注意）
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("获取受影响行数失败：%w", err)
+	}
+	return rowsAffected, nil
+}
+
+// SetInc 支持一次更新多个字段自增
 func (db *MysqlDb) SetInc(ctx context.Context, tpl string, step ...int) (int64, error) {
 	defer db.clearData(false)
 	if db.Db == nil {
@@ -655,7 +731,7 @@ func (db *MysqlDb) SetInc(ctx context.Context, tpl string, step ...int) (int64, 
 	}
 	if err != nil {
 		// 包装错误，保留原始错误链和SQL信息（便于调试）
-		return 0, fmt.Errorf("执行更新SQL失败，SQL：%s，错误：%w", sqlStr, err)
+		return 0, fmt.Errorf("执行更新SQL失败，SQL：%s，values:%s,错误：%w", sqlStr, function.Json_encode(values), err)
 	}
 	// 获取受影响的行数（批量插入时，LastInsertId仅返回第一条数据的自增ID，需注意）
 	rowsAffected, err := result.RowsAffected()
@@ -701,7 +777,7 @@ func (db *MysqlDb) Delete(ctx context.Context) (int64, error) {
 	}
 	if err != nil {
 		// 包装错误，保留原始错误链和SQL信息（便于调试）
-		return 0, fmt.Errorf("执行更新SQL失败，SQL：%s，错误：%w", sqlStr, err)
+		return 0, fmt.Errorf("执行更新SQL失败，SQL：%s，values:%s,错误：%w", sqlStr, function.Json_encode(db.WhereArgs), err)
 	}
 	// 获取受影响的行数（批量插入时，LastInsertId仅返回第一条数据的自增ID，需注意）
 	rowsAffected, err := result.RowsAffected()
@@ -730,7 +806,7 @@ func (db *MysqlDb) Exec(ctx context.Context, sqlStr string, values ...interface{
 	}
 	if err != nil {
 		// 包装错误，保留原始错误链和SQL信息（便于调试）
-		return 0, fmt.Errorf("执行Exec的SQL失败，SQL：%s，错误：%w", sqlStr, err)
+		return 0, fmt.Errorf("执行Exec的SQL失败，SQL：%s,values:%s,，错误：%w", sqlStr, function.Json_encode(values), err)
 	}
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {

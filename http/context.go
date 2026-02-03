@@ -66,10 +66,15 @@ func (c *Context) GetPath() string {
 func (c *Context) GetClientIP() string {
 	// 通用客户端IP获取逻辑（兼容反向代理）
 	ip := c.Req.Header.Get("X-Real-IP")
-	if ip == "" {
-		ip = c.Req.Header.Get("X-Forwarded-For")
-		if ip != "" {
-			ip = strings.Split(ip, ",")[0]
+	forwardedFor := c.Req.Header.Get("X-Forwarded-For")
+	if strings.Contains(forwardedFor, ip) {
+		ip = strings.Split(forwardedFor, ",")[0]
+	} else {
+		if ip == "" {
+			ip = c.Req.Header.Get("X-Forwarded-For")
+			if ip != "" {
+				ip = strings.Split(ip, ",")[0]
+			}
 		}
 	}
 	if ip == "" {
