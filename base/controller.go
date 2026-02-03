@@ -1,6 +1,17 @@
 package base
 
-
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"github.com/dfpopp/go-dai/grpc"
+	"github.com/dfpopp/go-dai/http"
+	"github.com/dfpopp/go-dai/logger"
+	"github.com/dfpopp/go-dai/netContext"
+	"github.com/dfpopp/go-dai/websocket"
+	"github.com/google/uuid"
+	"sync"
+)
 
 // BaseController 框架根控制器基类
 type BaseController struct {
