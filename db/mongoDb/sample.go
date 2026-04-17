@@ -3,6 +3,7 @@ package mongoDb
 import (
 	"context"
 	"fmt"
+
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -13,8 +14,8 @@ func CallSetWhere(mg *Db, ctx context.Context, coll string) {
 	// 设置查询条件：country=中国 且 type=tv
 	result, err := mg.SetTable(coll).
 		SetWhere(bson.D{
-			{"country", "中国"},
-			{"type", "tv"},
+			{Key: "country", Value: "中国"},
+			{Key: "type", Value: "tv"},
 		}).
 		FindAll(ctx).
 		ToString()
@@ -29,11 +30,11 @@ func CallSetAgg(mg *Db, ctx context.Context, coll string) {
 	fmt.Println("\n--- SetAggregatePipe 调用实例 ---")
 	// 构建聚合管道：分组统计 + 排序
 	pipe := mongo.Pipeline{
-		bson.D{{"$group", bson.D{
-			{"_id", "$country"},
-			{"count", bson.M{"$sum": 1}},
+		bson.D{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: "$country"},
+			{Key: "count", Value: bson.M{"$sum": 1}},
 		}}},
-		bson.D{{"$sort", bson.D{{"count", -1}}}}, // 按数量降序
+		bson.D{{Key: "$sort", Value: bson.D{{Key: "count", Value: -1}}}}, // 按数量降序
 	}
 
 	// 执行聚合查询
@@ -52,10 +53,10 @@ func CallSetSort(mg *Db, ctx context.Context, coll string) {
 	fmt.Println("\n--- SetSort 调用实例 ---")
 	// 设置排序：create_time降序，title升序
 	result, err := mg.SetTable(coll).
-		SetWhere(bson.D{{"country", "中国"}}).
+		SetWhere(bson.D{{Key: "country", Value: "中国"}}).
 		SetSort(bson.D{
-			{"create_time", -1}, // -1=降序
-			{"title", 1},        // 1=升序
+			{Key: "create_time", Value: -1}, // -1=降序
+			{Key: "title", Value: 1},        // 1=升序
 		}).
 		FindAll(ctx).
 		ToString()
@@ -70,12 +71,12 @@ func CallSetProjection(mg *Db, ctx context.Context, coll string) {
 	fmt.Println("\n--- SetProjection 调用实例 ---")
 	// 设置投影：返回title、type、country，不返回_id（_id默认返回，需显式置0）
 	result, err := mg.SetTable(coll).
-		SetWhere(bson.D{{"country", "中国"}}).
+		SetWhere(bson.D{{Key: "country", Value: "中国"}}).
 		SetProjection(bson.D{
-			{"_id", 0},
-			{"title", 1},
-			{"type", 1},
-			{"country", 1},
+			{Key: "_id", Value: 0},
+			{Key: "title", Value: 1},
+			{Key: "type", Value: 1},
+			{Key: "country", Value: 1},
 		}).
 		FindAll(ctx).
 		ToString()
@@ -112,11 +113,11 @@ func CallSetUpdateUpsert(mg *Db, ctx context.Context, coll string) {
 	// 设置更新内容：country=韩国，type=movie
 	// 设置Upsert=true：不存在则插入
 	updateCount, err := mg.SetTable(coll).
-		SetWhere(bson.D{{"title", "未找到的电影"}}).
+		SetWhere(bson.D{{Key: "title", Value: "未找到的电影"}}).
 		SetUpdateUpsert(true). // 不存在则插入
 		Update(ctx, bson.D{
-			{"country", "韩国"},
-			{"type", "movie"},
+			{Key: "country", Value: "韩国"},
+			{Key: "type", Value: "movie"},
 		})
 
 	if err != nil {
@@ -130,16 +131,16 @@ func CallSetUpdateArrayFilters(mg *Db, ctx context.Context, coll string) {
 	// 构建数组过滤条件：匹配actors数组中name=张三的元素
 	arrayFilters := options.ArrayFilters{
 		Filters: []interface{}{
-			bson.D{{"actor.name", "张三"}}, // 过滤条件别名：actor
+			bson.D{{Key: "actor.name", Value: "张三"}}, // 过滤条件别名：actor
 		},
 	}
 
 	// 执行更新：将匹配的数组元素的role改为"主角"
 	updateCount, err := mg.SetTable(coll).
-		SetWhere(bson.D{{"title", "测试电影1"}}).
+		SetWhere(bson.D{{Key: "title", Value: "测试电影1"}}).
 		SetUpdateArrayFilters(arrayFilters). // 设置数组过滤
 		Update(ctx, bson.D{
-			{"actors.$[actor].role", "主角"}, // 使用别名actor匹配过滤条件
+			{Key: "actors.$[actor].role", Value: "主角"}, // 使用别名actor匹配过滤条件
 		})
 
 	if err != nil {
@@ -153,8 +154,8 @@ func CallSetDeleteHint(mg *Db, ctx context.Context, coll string) {
 	// 设置删除条件：country=测试
 	// 设置索引提示：使用country字段的索引（优化查询性能）
 	delCount, err := mg.SetTable(coll).
-		SetWhere(bson.D{{"country", "测试"}}).
-		SetDeleteHint(bson.D{{"country", 1}}). // 指定使用country索引
+		SetWhere(bson.D{{Key: "country", Value: "测试"}}).
+		SetDeleteHint(bson.D{{Key: "country", Value: 1}}). // 指定使用country索引
 		Delete(ctx)
 
 	if err != nil {
@@ -173,8 +174,8 @@ func CallSetCollation(mg *Db, ctx context.Context, coll string) {
 
 	// 执行查询：按title拼音升序排序
 	result, err := mg.SetTable(coll).
-		SetWhere(bson.D{{"title", bson.M{"$regex": "测试"}}}).
-		SetSort(bson.D{{"title", 1}}).
+		SetWhere(bson.D{{Key: "title", Value: bson.M{"$regex": "测试"}}}).
+		SetSort(bson.D{{Key: "title", Value: 1}}).
 		SetCollation(collation). // 设置字符串排序规则
 		FindAll(ctx).
 		ToString()
@@ -200,9 +201,9 @@ func GetProductCount() (string, error) {
 	ctx := context.Background()
 	// 2. 构建基础查询条件（原where的基础部分）
 	baseWhere := bson.D{
-		{"year", bson.M{"$gte": sYear, "$lte": eYear}},
-		{"name", bson.M{"$in": productList}},
-		{"markType", postData["markType"][0]},
+		{Key: "year", Value: bson.M{"$gte": sYear, "$lte": eYear}},
+		{Key: "name", Value: bson.M{"$in": productList}},
+		{Key: "markType", Value: postData["markType"][0]},
 	}
 
 	// 3. 动态追加provinceId条件（原代码的if判断逻辑）
@@ -215,14 +216,14 @@ func GetProductCount() (string, error) {
 
 	// 4. 构建聚合管道（与原pipeline完全一致）
 	pipeline := mongo.Pipeline{
-		bson.D{{"$match", baseWhere}}, // 匹配条件
-		bson.D{{"$group", bson.D{ // 分组统计
-			{"_id", "$name"},
-			{"amount", bson.D{{"$sum", "$amount"}}},
-			{"num", bson.D{{"$sum", "$num"}}},
+		bson.D{{Key: "$match", Value: baseWhere}}, // 匹配条件
+		bson.D{{Key: "$group", Value: bson.D{ // 分组统计
+			{Key: "_id", Value: "$name"},
+			{Key: "amount", Value: bson.D{{Key: "$sum", Value: "$amount"}}},
+			{Key: "num", Value: bson.D{{Key: "$sum", Value: "$num"}}},
 		}}},
-		bson.D{{"$sort", bson.D{{"_id", 1}}}}, // 按_id升序排序
-		bson.D{{"$project", bson.M{ // 字段投影
+		bson.D{{Key: "$sort", Value: bson.D{{Key: "_id", Value: 1}}}}, // 按_id升序排序
+		bson.D{{Key: "$project", Value: bson.M{ // 字段投影
 			"product": "$_id",
 			"amount":  "$amount",
 			"num":     "$num",

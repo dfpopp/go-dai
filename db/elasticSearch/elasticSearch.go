@@ -7,11 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/dfpopp/go-dai/config"
-	"github.com/dfpopp/go-dai/function"
-	"github.com/dfpopp/go-dai/logger"
-	"github.com/elastic/go-elasticsearch/v8"
-	"github.com/elastic/go-elasticsearch/v8/esapi"
 	"io"
 	"net"
 	"net/http"
@@ -20,6 +15,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/dfpopp/go-dai/config"
+	"github.com/dfpopp/go-dai/function"
+	"github.com/dfpopp/go-dai/logger"
+	"github.com/elastic/go-elasticsearch/v8"
+	"github.com/elastic/go-elasticsearch/v8/esapi"
 )
 
 // 该文件为ES基本操作类，支持链式操作
@@ -35,6 +36,20 @@ const (
 
 // InitEs 初始化MySQL连接池
 func InitEs() {
+	initEsConnections()
+
+	// 注册配置变更钩子，当数据库配置变更时重新初始化连接
+	config.RegisterConfigChangeHook(func(configType string, config interface{}) error {
+		if configType == "database" {
+			logger.Info("数据库配置变更，重新初始化ElasticSearch连接...")
+			return reinitEsConnections()
+		}
+		return nil
+	})
+}
+
+// initEsConnections 初始化ElasticSearch连接
+func initEsConnections() {
 	cfgMap := config.GetEsConfig()
 	for dbKey, cfg := range cfgMap {
 		client, transport, err := connect(cfg)
@@ -44,6 +59,47 @@ func InitEs() {
 			multiESPool.Store(dbKey, DbObj{Client: client, Transport: transport, Pre: cfg.Pre, GzipStatus: cfg.GzipStatus})
 		}
 	}
+}
+
+// reinitEsConnections 重新初始化ElasticSearch连接（平滑切换）
+func reinitEsConnections() error {
+	cfgMap := config.GetEsConfig()
+
+	// 存储需要关闭的旧连接
+	oldConnections := make(map[string]DbObj)
+
+	// 先收集所有旧连接
+	multiESPool.Range(func(key, value interface{}) bool {
+		dbKey := key.(string)
+		dbObj := value.(DbObj)
+		oldConnections[dbKey] = dbObj
+		return true
+	})
+
+	// 创建新连接
+	for dbKey, cfg := range cfgMap {
+		client, transport, err := connect(cfg)
+		if err != nil {
+			logger.Error(fmt.Sprintf("ES连接初始化失败（%s）: %v", dbKey, err))
+		} else {
+			multiESPool.Store(dbKey, DbObj{Client: client, Transport: transport, Pre: cfg.Pre, GzipStatus: cfg.GzipStatus})
+			// 从旧连接映射中移除已更新的连接
+			delete(oldConnections, dbKey)
+		}
+	}
+
+	// 延迟关闭旧连接（给现有操作30秒时间完成）
+	go func() {
+		time.Sleep(30 * time.Second)
+		for dbKey, _ := range oldConnections {
+			// ElasticSearch客户端没有Close方法，直接删除连接池中的条目
+			// 连接会在HTTP Transport的空闲超时后自动关闭
+			logger.Info("旧ElasticSearch连接已从连接池移除:", "dbKey", dbKey)
+			multiESPool.Delete(dbKey)
+		}
+	}()
+
+	return nil
 }
 
 // connect 建立MongoDB连接

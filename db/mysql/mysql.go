@@ -45,38 +45,99 @@ type DbObj struct {
 
 // InitMySQL 初始化MySQL连接池
 func InitMySQL() {
+	initMySQLConnections()
+
+	// 注册配置变更钩子，当数据库配置变更时重新初始化连接
+	config.RegisterConfigChangeHook(func(configType string, config interface{}) error {
+		if configType == "database" {
+			logger.Info("数据库配置变更，重新初始化MySQL连接...")
+			return reinitMySQLConnections()
+		}
+		return nil
+	})
+}
+
+// initMySQLConnections 初始化MySQL连接
+func initMySQLConnections() {
 	cfgMap := config.GetMysqlConfig()
 	for dbKey, cfg := range cfgMap {
-		db, err := sql.Open("mysql", cfg.User+":"+cfg.Pwd+"@tcp("+cfg.Host+":"+cfg.Port+")/"+cfg.Dbname+"?charset="+cfg.Charset)
-		if err != nil {
-			logger.Error("MySQL连接失败: " + err.Error())
+		createMySQLConnection(dbKey, cfg)
+	}
+}
+
+// reinitMySQLConnections 重新初始化MySQL连接（平滑切换）
+func reinitMySQLConnections() error {
+	cfgMap := config.GetMysqlConfig()
+
+	// 存储需要关闭的旧连接
+	oldConnections := make(map[string]DbObj)
+
+	// 先收集所有旧连接
+	multiDBPool.Range(func(key, value interface{}) bool {
+		dbKey := key.(string)
+		dbObj := value.(DbObj)
+		oldConnections[dbKey] = dbObj
+		return true
+	})
+
+	// 创建新连接
+	for dbKey, cfg := range cfgMap {
+		createMySQLConnection(dbKey, cfg)
+		// 从旧连接映射中移除已更新的连接
+		delete(oldConnections, dbKey)
+	}
+
+	// 延迟关闭旧连接（给现有操作30秒时间完成）
+	go func() {
+		time.Sleep(30 * time.Second)
+		for dbKey, dbObj := range oldConnections {
+			if err := dbObj.Db.Close(); err != nil {
+				logger.Error("关闭旧MySQL连接失败:", "dbKey", dbKey, "error", err)
+			} else {
+				logger.Info("旧MySQL连接已关闭:", "dbKey", dbKey)
+			}
+			multiDBPool.Delete(dbKey)
+		}
+	}()
+
+	return nil
+}
+
+// createMySQLConnection 创建MySQL连接
+func createMySQLConnection(dbKey string, cfg config.MySQLConfig) {
+	db, err := sql.Open("mysql", cfg.User+":"+cfg.Pwd+"@tcp("+cfg.Host+":"+cfg.Port+")/"+cfg.Dbname+"?charset="+cfg.Charset)
+	if err != nil {
+		logger.Error("MySQL连接失败: " + err.Error())
+	} else {
+		// 设置连接池参数
+		cpuNum := runtime.NumCPU()
+		if cfg.MaxOpenConnNum <= 0 {
+			cfg.MaxOpenConnNum = cpuNum * 3
+		}
+		if cfg.MaxIdleConnNum <= 0 {
+			cfg.MaxIdleConnNum = cpuNum * 2
+		}
+		if cfg.ConnMaxIdleTime <= 0 {
+			cfg.ConnMaxIdleTime = 300
+		}
+		if cfg.ConnMaxLifetime <= 0 {
+			cfg.ConnMaxLifetime = 1800
+		}
+		db.SetMaxOpenConns(cfg.MaxOpenConnNum)
+		db.SetMaxIdleConns(cfg.MaxIdleConnNum)
+		db.SetConnMaxIdleTime(time.Duration(cfg.ConnMaxIdleTime) * time.Second) // 空闲连接超时时间（300秒无使用则关闭）
+		db.SetConnMaxLifetime(time.Duration(cfg.ConnMaxLifetime) * time.Second) // 连接最长存活时间;mysql default conn timeout=8h, should < mysql_timeout
+		// 测试连接
+		if err := db.Ping(); err != nil {
+			logger.Error("MySQL Ping失败: " + err.Error())
 		} else {
-			// 设置连接池参数
-			cpuNum := runtime.NumCPU()
-			if cfg.MaxOpenConnNum <= 0 {
-				cfg.MaxOpenConnNum = cpuNum * 3
-			}
-			if cfg.MaxIdleConnNum <= 0 {
-				cfg.MaxIdleConnNum = cpuNum * 2
-			}
-			if cfg.ConnMaxIdleTime <= 0 {
-				cfg.ConnMaxIdleTime = 300
-			}
-			if cfg.ConnMaxLifetime <= 0 {
-				cfg.ConnMaxLifetime = 1800
-			}
-			db.SetMaxOpenConns(cfg.MaxOpenConnNum)
-			db.SetMaxIdleConns(cfg.MaxIdleConnNum)
-			db.SetConnMaxIdleTime(time.Duration(cfg.ConnMaxIdleTime) * time.Second) // 空闲连接超时时间（300秒无使用则关闭）
-			db.SetConnMaxLifetime(time.Duration(cfg.ConnMaxLifetime) * time.Second) // 连接最长存活时间;mysql default conn timeout=8h, should < mysql_timeout
-			// 测试连接
-			if err := db.Ping(); err != nil {
-				logger.Error("MySQL Ping失败: " + err.Error())
-			}
+			// 存储新连接
 			multiDBPool.Store(dbKey, DbObj{Db: db, Pre: cfg.Pre})
+			logger.Info("MySQL连接成功:", "dbKey", dbKey)
 		}
 	}
 }
+
 func GetMysqlDB(dbKey string) (*MysqlDb, error) {
 	val, ok := multiDBPool.Load(dbKey)
 	if !ok {
@@ -249,6 +310,84 @@ func (db *MysqlDb) SetLimit(skip int64, num int64) *MysqlDb {
 	}
 	return db
 }
+func (db *MysqlDb) FetchSql() (string, error) {
+	if db.Err != nil {
+		return "", db.Err
+	}
+	if db.Db == nil {
+		db.Err = errors.New("数据库连接未初始化")
+		return "", db.Err
+	}
+	if db.Table == "" {
+		db.Err = errors.New("未指定表名")
+		return "", db.Err
+	} else {
+		if !isValidTable(db.Table) {
+			db.Err = fmt.Errorf("表名[%s]包含非法字符，存在注入风险", db.Table)
+			return "", db.Err
+		}
+	}
+	if db.Field == "" {
+		db.Field = "*"
+	} else {
+		// 校验字段合法性（防止字段注入）
+		if !isValidField(db.Field) {
+			db.Err = fmt.Errorf("查询字段[%s]包含非法字符，存在注入风险", db.Field)
+			return "", db.Err
+		}
+	}
+	sqlStr := "SELECT " + db.Field + " FROM " + db.Table
+	if db.Alias != "" {
+		// 校验别名合法性
+		if !isValidTable(db.Alias) {
+			db.Err = fmt.Errorf("表别名[%s]包含非法字符，存在注入风险", db.Alias)
+			return "", db.Err
+		}
+		sqlStr += " AS " + db.Alias
+	}
+	if len(db.RelationList) > 0 {
+		for _, relation := range db.RelationList {
+			// 校验关联语句合法性
+			if !isValidRelation(relation) {
+				db.Err = fmt.Errorf("关联语句[%s]格式非法，存在注入风险", relation)
+				return "", db.Err
+			}
+			sqlStr += " " + relation
+		}
+	}
+	if len(db.WhereTemplates) > 0 {
+		for _, tpl := range db.WhereTemplates {
+			if !isValidWhere(tpl) {
+				db.Err = fmt.Errorf("where子句[%s]格式非法，存在注入风险", tpl)
+				return "", db.Err
+			}
+		}
+		sqlStr += " WHERE " + strings.Join(db.WhereTemplates, " AND ")
+	}
+	if db.Group != "" {
+		if !isValidGroup(db.Group) {
+			db.Err = fmt.Errorf("GROUP BY子句[%s]包含非法字符，存在注入风险", db.Group)
+			return "", db.Err
+		}
+		sqlStr += " GROUP BY " + db.Group
+	}
+	if db.Order != "" {
+		if !isValidOrder(db.Order) {
+			db.Err = fmt.Errorf("ORDER BY子句[%s]包含非法字符，存在注入风险", db.Order)
+			return "", db.Err
+		}
+		sqlStr += " ORDER BY " + db.Order
+	}
+	if db.Limit != "" {
+		// 校验LIMIT格式（仅允许数字和逗号）
+		sqlStr += " LIMIT " + db.Limit
+	} else {
+		sqlStr += " LIMIT 500"
+	}
+	formatStr := strings.ReplaceAll(sqlStr, "?", "%v")
+	sqlStr = fmt.Sprintf(formatStr, db.WhereArgs...)
+	return sqlStr, nil
+}
 func (db *MysqlDb) FindAll(ctx context.Context) *MysqlDb {
 	if db.Err != nil {
 		return db
@@ -384,7 +523,11 @@ func (db *MysqlDb) FindCount(ctx context.Context) (int64, error) {
 	if db.Db == nil {
 		return 0, errors.New("数据库连接池未初始化（mysql.Db为nil）")
 	}
-	db.Field = "COUNT(*) AS count"
+	if db.Field == "" {
+		db.Field = "COUNT(*) AS count"
+	} else {
+		db.Field = "COUNT(" + db.Field + ") AS count"
+	}
 	db.Limit = "1"
 	db.FindAll(ctx)
 	if db.Err != nil {
@@ -684,7 +827,7 @@ func (db *MysqlDb) UpdateBySet(ctx context.Context, setTpl string, values ...int
 }
 
 // SetInc 支持一次更新多个字段自增
-func (db *MysqlDb) SetInc(ctx context.Context, tpl string, step ...int) (int64, error) {
+func (db *MysqlDb) SetInc(ctx context.Context, tpl string, step ...interface{}) (int64, error) {
 	defer db.clearData(false)
 	if db.Db == nil {
 		return 0, errors.New("数据库连接池未初始化（mysql.Db为nil）")

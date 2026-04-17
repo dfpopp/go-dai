@@ -1,10 +1,12 @@
 package http
 
 import (
-	"github.com/dfpopp/go-dai/config"
-	"github.com/dfpopp/go-dai/logger"
+	"context"
 	"net/http"
 	"time"
+
+	"github.com/dfpopp/go-dai/config"
+	"github.com/dfpopp/go-dai/logger"
 )
 
 var ErrServerClosed = http.ErrServerClosed
@@ -14,6 +16,7 @@ type ServerConfig struct {
 	Addr           string        // 监听地址（ip:port）
 	ReadTimeout    time.Duration // 读超时
 	WriteTimeout   time.Duration // 写超时
+	IdleTimeout    time.Duration // 空闲超时
 	MaxHeaderBytes int           // 最大请求头大小
 	SSL            bool          // 是否启用SSL
 	SSLCertFile    string        // SSL证书路径
@@ -38,11 +41,12 @@ func NewServer(appName string) *Server {
 			Addr:           cfg.Addr,
 			ReadTimeout:    cfg.ReadTimeout,
 			WriteTimeout:   cfg.WriteTimeout,
+			IdleTimeout:    cfg.IdleTimeout,
 			MaxHeaderBytes: cfg.MaxHeaderBytes,
 			Handler:        router, // 临时占位，SetRouter会覆盖
 		},
 	}
-	serv.Use(CORS())
+	serv.Use(CORS(), Recovery())
 	return serv
 }
 
@@ -93,17 +97,32 @@ func (s *Server) Run() error {
 // Stop 停止HTTP服务器（原有逻辑不变）
 func (s *Server) Stop() error {
 	logger.Info("HTTP服务器正在停止...")
-	return s.server.Shutdown(nil)
+	if s.server != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return s.server.Shutdown(ctx)
+	}
+	return nil
 }
 
 // loadServerConfig 加载配置（原有逻辑不变）
 func loadServerConfig(appName string) *ServerConfig {
 	appCfg := config.GetAppConfig(appName)
 	httpCfg := appCfg.HTTP
+	if httpCfg.ReadTimeout == 0 {
+		httpCfg.ReadTimeout = 30
+	}
+	if httpCfg.WriteTimeout == 0 {
+		httpCfg.WriteTimeout = 30
+	}
+	if httpCfg.IdleTimeout == 0 {
+		httpCfg.IdleTimeout = 60
+	}
 	return &ServerConfig{
 		Addr:           httpCfg.Addr,
 		ReadTimeout:    time.Duration(httpCfg.ReadTimeout) * time.Second,
 		WriteTimeout:   time.Duration(httpCfg.WriteTimeout) * time.Second,
+		IdleTimeout:    time.Duration(httpCfg.IdleTimeout) * time.Second,
 		MaxHeaderBytes: httpCfg.MaxHeaderBytes,
 		SSL:            httpCfg.SSL,
 		SSLCertFile:    httpCfg.SSLCertFile,

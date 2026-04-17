@@ -3,7 +3,6 @@ package logger
 import (
 	"errors"
 	"fmt"
-	"github.com/dfpopp/go-dai/config"
 	"log"
 	"os"
 	"path/filepath"
@@ -11,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/dfpopp/go-dai/config"
 )
 
 // Logger 日志接口
@@ -52,7 +53,7 @@ func getCallerPrefix() string {
 		}
 		funcName := funcInfo.Name()
 		// 跳过logger包内的所有调用（匹配包路径关键词）
-		if strings.Contains(funcName, "github.com/dfpopp/go-dai/logger") || strings.Contains(filePath, goRoot) {
+		if strings.Contains(funcName, "github.com/dfpopp/go-dai/logger") || (goRoot != "" && strings.Contains(filePath, goRoot)) {
 			continue
 		}
 		// 只保留文件名+行号（如 login.go:25），也可保留完整路径
@@ -125,6 +126,9 @@ func InitLogger(appName string, appPath string) error {
 
 // GetLogger 获取日志实例
 func GetLogger() Logger {
+	if defaultLogger == nil {
+		return nil
+	}
 	return defaultLogger
 }
 
@@ -173,7 +177,6 @@ func Info(v ...interface{}) {
 		defaultLogger.Info(v...)
 	}
 }
-
 func Warn(v ...interface{}) {
 	if defaultLogger != nil {
 		defaultLogger.Warn(v...)
@@ -193,7 +196,7 @@ func getFilePath(filePath string) string {
 		} else {
 			return filePath
 		}
-	} else if strings.Contains(filePath, defaultLogger.appPath) {
+	} else if defaultLogger != nil && strings.Contains(filePath, defaultLogger.appPath) {
 		return strings.ReplaceAll(filePath, defaultLogger.appPath, "")
 	} else {
 		pathList := strings.Split(filePath, "/")

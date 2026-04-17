@@ -2,6 +2,7 @@ package mongoDb
 
 import (
 	"fmt"
+
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
@@ -30,7 +31,7 @@ func ObjectIDToString(oid primitive.ObjectID) string {
 func MapToBsonD(sdata map[string]interface{}) bson.D {
 	tdata := bson.D{}
 	keys := make([]string, 0)
-	for key, _ := range sdata {
+	for key := range sdata {
 		keys = append(keys, key)
 	}
 	for _, key := range keys {

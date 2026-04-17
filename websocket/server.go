@@ -1,31 +1,46 @@
 package websocket
 
 import (
+	"context"
 	"crypto/sha1"
 	"crypto/tls"
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/dfpopp/go-dai/config"
-	"github.com/dfpopp/go-dai/logger"
 	"io"
 	"net"
 	"net/http"
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/dfpopp/go-dai/config"
+	"github.com/dfpopp/go-dai/logger"
 )
 
 var ErrServerClosed = http.ErrServerClosed
+var ErrConnNotFound = errors.New("connection not found")
 
 // 帧操作码定义（原有逻辑不变）
 const (
+	// opCodeContinuation 连续帧操作码（未使用）
+	// 用于分片消息的后续帧
 	opCodeContinuation = 0x0
-	opCodeText         = 0x1
-	opCodeBinary       = 0x2
-	opCodeClose        = 0x8
-	opCodePing         = 0x9
-	opCodePong         = 0xA
+	// opCodeText 文本帧操作码
+	// 用于发送文本数据
+	opCodeText = 0x1
+	// opCodeBinary 二进制帧操作码（未使用）
+	// 用于发送二进制数据
+	opCodeBinary = 0x2
+	// opCodeClose 关闭连接操作码
+	// 用于关闭WebSocket连接
+	opCodeClose = 0x8
+	// opCodePing Ping操作码
+	// 用于心跳检测
+	opCodePing = 0x9
+	// opCodePong Pong操作码
+	// 用于响应Ping操作
+	opCodePong = 0xA
 )
 
 // ServerConfig WS服务器配置（原有逻辑不变，已包含SSL字段）
@@ -146,7 +161,9 @@ func (s *Server) Run() error {
 func (s *Server) Stop() error {
 	logger.Info("WebSocket服务器正在停止...当前连接数：", atomic.LoadInt32(&s.connectionCount))
 	if s.server != nil {
-		return s.server.Shutdown(nil)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return s.server.Shutdown(ctx)
 	}
 	return nil
 }
@@ -207,6 +224,12 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 // messageLoop 消息处理循环（依赖框架Router，原有逻辑不变）
 func (s *Server) messageLoop(wsConn *Conn, r *http.Request, connID string, closeReason *string) {
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Error("WebSocket处理 panic:", err, "连接ID:", connID)
+			*closeReason = fmt.Sprintf("internal error: %v", err)
+		}
+	}()
 	if s.router == nil {
 		logger.Error("WS路由器未初始化")
 		return
@@ -230,7 +253,10 @@ func (s *Server) messageLoop(wsConn *Conn, r *http.Request, connID string, close
 		action, requestId, data, err := s.router.ParseMessage(rawMsg)
 		if err != nil {
 			logger.Warn("WS解析消息失败：", err, "连接ID：", connID, "客户端：", wsConn.RemoteAddr())
-			_ = wsConn.WriteMessage(string(`{"code":400,"msg":"消息格式错误","data":null}`))
+			err = wsConn.WriteMessage(string(`{"code":400,"msg":"消息格式错误","data":null}`))
+			if err != nil {
+				logger.Error("WS写入消息失败：", err, "连接ID：", connID, "客户端：", wsConn.RemoteAddr())
+			}
 			continue
 		}
 
@@ -258,7 +284,7 @@ func (s *Server) upgrade(w http.ResponseWriter, r *http.Request) (*Conn, error) 
 
 	// 跨域校验
 	origin := r.Header.Get("Origin")
-	if s.config.Origin != "*" && origin != "" && origin != s.config.Origin {
+	if s.config.Origin != "*" && origin != s.config.Origin {
 		return nil, fmt.Errorf("origin '%s' not allowed", origin)
 	}
 
@@ -324,10 +350,34 @@ func (c *Conn) ReadMessage() (message []byte, err error) {
 		case opCodeClose:
 			return nil, errors.New("client closed connection")
 		case opCodePing:
-			_ = c.writeFrame(true, opCodePong, payload)
+			err = c.writeFrame(true, opCodePong, payload)
+			if err != nil {
+				return nil, err
+			}
 			continue
 		case opCodePong:
 			continue
+		case opCodeContinuation, opCodeBinary, opCodeText:
+			// 处理数据帧
+			// 包括：连续帧（分片消息）、二进制帧、文本帧
+			// 这些帧的payload将在后续代码中统一添加到message中
+		default:
+			// 处理未知操作码
+			if opCode >= 0x8 {
+				// 控制帧（操作码 >= 0x8），必须关闭连接
+				// 根据WebSocket协议规范，未知的控制帧应该被拒绝
+				_ = c.WriteCloseMessage(1002, "unsupported control opcode")
+				return nil, errors.New("unsupported control opcode")
+			} else {
+				// 数据帧（操作码 < 0x8），可以选择忽略
+				// 记录警告并跳过该帧
+				logger.Warn("收到未知的数据帧操作码，跳过该帧", "opCode", opCode)
+				if fin {
+					// 如果是最后一帧，返回已读取的消息
+					return message, nil
+				}
+				continue
+			}
 		}
 
 		if int64(len(message)+len(payload)) > c.maxMsgSize {
@@ -345,6 +395,11 @@ func (c *Conn) ReadMessage() (message []byte, err error) {
 
 func (c *Conn) WriteMessage(message string) error {
 	return c.writeFrame(true, opCodeText, []byte(message))
+}
+
+// WriteBinaryMessage 发送二进制消息
+func (c *Conn) WriteBinaryMessage(data []byte) error {
+	return c.writeFrame(true, opCodeBinary, data)
 }
 
 func (c *Conn) WriteCloseMessage(code int, reason string) error {

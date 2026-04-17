@@ -5,19 +5,18 @@ import (
 	"github.com/dfpopp/go-dai/db/mongoDb"
 	"github.com/dfpopp/go-dai/db/mysql"
 	"github.com/dfpopp/go-dai/db/redisDb"
-	"github.com/dfpopp/go-dai/logger"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"strings"
 )
 
 type BaseModel struct {
-	log logger.Logger // 日志实例
+	BaseComponent
 }
 
 // Init 初始化服务层（框架自动调用）
 func (m *BaseModel) Init() {
-	m.log = logger.GetLogger()
+	m.BaseComponent.Init()
 }
 
 func (m *BaseModel) GetMysqlDb(DbTag string) (*mysql.MysqlDb, error) {
@@ -40,21 +39,6 @@ func (m *BaseModel) ObjectIDToString(id primitive.ObjectID) string {
 }
 func (m *BaseModel) MapToBsonD(data map[string]interface{}) bson.D {
 	return mongoDb.MapToBsonD(data)
-}
-
-// LogInfo 记录服务层信息日志
-func (m *BaseModel) LogInfo(content ...interface{}) {
-	m.log.Info(content...)
-}
-
-// LogError 记录服务层错误日志
-func (m *BaseModel) LogError(content ...interface{}) {
-	m.log.Error(content...)
-}
-
-// LogWarn 记录服务层错误日志
-func (m *BaseModel) LogWarn(content ...interface{}) {
-	m.log.Warn(content...)
 }
 
 // StringToFulltextIndexStr 生成仅含双字符段的全文索引字符串（解决错位匹配）
@@ -195,5 +179,5 @@ func (m *BaseModel) StringToSearchFulltextStr(input string) string {
 		}
 	}
 	// 6. 拼接为空格分隔的字符串（无末尾空格）
-	return strings.Join(finalSegs, " ")
+	return "+" + strings.Join(finalSegs, " +")
 }

@@ -1,36 +1,60 @@
 package websocket
 
 import (
+	"context"
 	"encoding/json"
-	"github.com/dfpopp/go-dai/logger"
-	"github.com/dfpopp/go-dai/netContext"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
+
+	"github.com/dfpopp/go-dai/logger"
+	"github.com/dfpopp/go-dai/netContext"
 )
 
 // Context WebSocket上下文（与http.Context方法签名完全一致）
 type Context struct {
-	Conn      *Conn             // WS连接实例
-	Req       *http.Request     // 握手阶段的HTTP请求（兼容ctx.Req）
-	Action    string            // 对应HTTP的URL.Path（WS消息action）
-	RequestId string            // 请求唯一标识
-	params    map[string]string // 存储查询参数/POST参数（模拟HTTP参数）
-	rawData   []byte            // 原始消息数据（对应HTTP请求体）
-	ConnID    string            // 新增：当前连接的唯一ID
+	Conn         *Conn             // WS连接实例
+	Req          *http.Request     // 握手阶段的HTTP请求（兼容ctx.Req）
+	Action       string            // 对应HTTP的URL.Path（WS消息action）
+	RequestId    string            // 请求唯一标识
+	params       map[string]string // 存储查询参数/POST参数（模拟HTTP参数）
+	rawData      []byte            // 原始消息数据（对应HTTP请求体）
+	ConnID       string            // 新增：当前连接的唯一ID
+	ctx          context.Context
+	cancel       context.CancelFunc
+	values       map[string]interface{}
+	cleanupFuncs []func() // 清理函数列表
 }
 
 // NewContext 创建WS上下文（对应HTTP上下文初始化）
 func NewContext(conn *Conn, req *http.Request, action, requestId, connID string, rawData []byte) *Context {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Context{
-		Conn:      conn,
-		Req:       req,
-		Action:    action,
-		RequestId: requestId,
-		rawData:   rawData,
-		params:    make(map[string]string),
-		ConnID:    connID, // 赋值连接ID
+		Conn:         conn,
+		Req:          req,
+		Action:       action,
+		RequestId:    requestId,
+		rawData:      rawData,
+		params:       make(map[string]string),
+		ConnID:       connID, // 赋值连接ID
+		ctx:          ctx,
+		cancel:       cancel,
+		values:       make(map[string]interface{}),
+		cleanupFuncs: make([]func(), 0),
+	}
+}
+
+// RegisterCleanupFunc 注册清理函数
+func (c *Context) RegisterCleanupFunc(f func()) {
+	c.cleanupFuncs = append(c.cleanupFuncs, f)
+}
+
+// Cleanup 执行清理函数
+func (c *Context) Cleanup() {
+	for _, f := range c.cleanupFuncs {
+		f()
 	}
 }
 
@@ -44,6 +68,7 @@ type WSHandlerFunc func(netContext.Context)
 // ToWSHandler 将通用控制器方法转换为websocket.HandlerFunc
 func ToWSHandler(fn WSHandlerFunc) HandlerFunc {
 	return func(ctx *Context) {
+		defer ctx.Cleanup()
 		fn(ctx)
 	}
 }
@@ -217,6 +242,42 @@ func (c *Context) GetParam(key string) string {
 }
 
 // GetRequest 实现通用context.Context接口（返回握手阶段的HTTP请求）
-func (c *Context) GetRequest() *http.Request {
-	return c.Req
+func (c *Context) GetRequest() (*http.Request, error) {
+	return c.Req, nil
+}
+
+// Set 设置上下文值
+func (c *Context) Set(key string, value interface{}) {
+	c.values[key] = value
+}
+
+// Get 获取上下文值
+func (c *Context) Get(key string) (interface{}, bool) {
+	value, ok := c.values[key]
+	return value, ok
+}
+
+// Deadline 获取上下文截止时间
+func (c *Context) Deadline() (deadline time.Time, ok bool) {
+	return c.ctx.Deadline()
+}
+
+// Done 获取上下文完成通道
+func (c *Context) Done() <-chan struct{} {
+	return c.ctx.Done()
+}
+
+// Err 获取上下文错误
+func (c *Context) Err() error {
+	return c.ctx.Err()
+}
+
+// Value 获取上下文值
+func (c *Context) Value(key interface{}) interface{} {
+	if keyStr, ok := key.(string); ok {
+		if value, exists := c.values[keyStr]; exists {
+			return value
+		}
+	}
+	return c.ctx.Value(key)
 }

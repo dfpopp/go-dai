@@ -1,168 +1,199 @@
 package websocket
 
 import (
-	"errors"
-	"github.com/dfpopp/go-dai/logger"
-	"github.com/google/uuid"
+	"fmt"
+	"math/rand"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-// ConnInfo 连接信息结构体
-type ConnInfo struct {
-	Conn     *Conn     // WS连接实例
-	ConnID   string    // 唯一连接ID
-	ClientIP string    // 客户端IP
-	CreateAt time.Time // 连接创建时间
-	attrs    sync.Map  // 应用层自定义属性（如用户ID）
-}
-
-// ConnManager 连接管理器（单例）
+// ConnManager 连接管理器
 type ConnManager struct {
-	connMap  sync.Map      // key: ConnID, value: *ConnInfo
-	eventBus *ConnEventBus // 事件总线
+	conns     map[string]*Conn
+	connInfos map[string]*ConnInfo // 存储连接信息
+	connAttrs map[string]map[string]interface{}
+	connLock  sync.RWMutex
+	attrLock  sync.RWMutex
+	connCount int32
+	eventMgr  *ConnectionEventManager
 }
 
-// 全局连接管理器实例
-var globalConnManager = NewConnManager()
+// 全局连接管理器
+var (
+	globalConnManager *ConnManager
+	once              sync.Once
+)
 
 // NewConnManager 创建连接管理器
 func NewConnManager() *ConnManager {
 	return &ConnManager{
-		eventBus: NewConnEventBus(),
+		conns:     make(map[string]*Conn),
+		connInfos: make(map[string]*ConnInfo), // 初始化
+		connAttrs: make(map[string]map[string]interface{}),
+		connCount: 0,
+		eventMgr:  NewConnectionEventManager(),
 	}
 }
 
-// GetGlobalConnManager 获取全局连接管理器（应用层/框架层调用）
-func GetGlobalConnManager() *ConnManager {
-	return globalConnManager
+// GetEventManager 获取事件管理器
+func (m *ConnManager) GetEventManager() *ConnectionEventManager {
+	return m.eventMgr
 }
 
-// GetEventBus 获取事件总线（应用层用于订阅事件）
-func (cm *ConnManager) GetEventBus() *ConnEventBus {
-	return cm.eventBus
+// GetConnByConnID 根据连接ID获取连接
+func (m *ConnManager) GetConnByConnID(connID string) (interface{}, bool) {
+	m.connLock.RLock()
+	defer m.connLock.RUnlock()
+	conn, ok := m.conns[connID]
+	return conn, ok
 }
 
-// AddConn 添加连接（触发上线事件）
-func (cm *ConnManager) AddConn(conn *Conn, clientIP string) *ConnInfo {
-	connID := uuid.NewString()
+// AddConn 添加连接
+func (m *ConnManager) AddConn(conn *Conn, clientIP string) *ConnInfo {
+	connID := generateConnID()
 	connInfo := &ConnInfo{
-		Conn:     conn,
-		ConnID:   connID,
-		ClientIP: clientIP,
-		CreateAt: time.Now(),
+		ConnID:     connID,
+		ClientIP:   clientIP,
+		CreateTime: time.Now(),
 	}
-	cm.connMap.Store(connID, connInfo)
-	logger.Info("WS连接上线", "connID", connID, "clientIP", clientIP, "totalConn", cm.GetConnCount())
+	m.connLock.Lock()
+	m.conns[connID] = conn
+	m.connInfos[connID] = connInfo // 存储连接信息
+	m.connLock.Unlock()
 
-	// 发布上线事件
-	cm.eventBus.Publish(ConnEvent{
-		EventType:   EventConnOnline,
-		ConnInfo:    connInfo,
-		TriggerTime: time.Now(),
-		CloseReason: "",
-	})
+	m.attrLock.Lock()
+	m.connAttrs[connID] = make(map[string]interface{})
+	m.attrLock.Unlock()
+
+	atomic.AddInt32(&m.connCount, 1)
+
+	// 新增：通知连接建立事件
+	m.eventMgr.NotifyConnect(connInfo)
 
 	return connInfo
 }
 
-// RemoveConn 移除连接（触发下线事件）
-func (cm *ConnManager) RemoveConn(connID string, closeReason string) {
-	connInfo, exists := cm.connMap.LoadAndDelete(connID)
-	if !exists {
-		return
-	}
-	info := connInfo.(*ConnInfo)
-	logger.Info("WS连接下线", "connID", connID, "clientIP", info.ClientIP, "reason", closeReason, "totalConn", cm.GetConnCount())
+// RemoveConn 移除连接
+func (m *ConnManager) RemoveConn(connID, reason string) {
+	m.connLock.Lock()
+	connInfo := m.connInfos[connID] // 获取连接信息
+	delete(m.conns, connID)
+	delete(m.connInfos, connID) // 移除连接信息
+	m.connLock.Unlock()
 
-	// 发布下线事件
-	cm.eventBus.Publish(ConnEvent{
-		EventType:   EventConnOffline,
-		ConnInfo:    info,
-		TriggerTime: time.Now(),
-		CloseReason: closeReason,
-	})
+	m.attrLock.Lock()
+	delete(m.connAttrs, connID)
+	m.attrLock.Unlock()
 
-	_ = info.Conn.Close()
-}
+	atomic.AddInt32(&m.connCount, -1)
 
-// GetConnByConnID 根据ConnID获取连接实例（应用层调用）
-func (cm *ConnManager) GetConnByConnID(connID string) (*Conn, bool) {
-	connInfo, exists := cm.connMap.Load(connID)
-	if !exists {
-		return nil, false
-	}
-	return connInfo.(*ConnInfo).Conn, true
-}
-
-// GetConnInfoByConnID 根据ConnID获取完整连接信息（应用层调用）
-func (cm *ConnManager) GetConnInfoByConnID(connID string) (*ConnInfo, bool) {
-	connInfo, exists := cm.connMap.Load(connID)
-	if !exists {
-		return nil, false
-	}
-	return connInfo.(*ConnInfo), true
-}
-
-// GetConnCount 获取当前连接总数
-func (cm *ConnManager) GetConnCount() int {
-	count := 0
-	cm.connMap.Range(func(_, _ interface{}) bool {
-		count++
-		return true
-	})
-	return count
-}
-
-// Broadcast 群发消息（应用层调用）
-func (cm *ConnManager) Broadcast(message string) {
-	cm.connMap.Range(func(_, value interface{}) bool {
-		connInfo := value.(*ConnInfo)
-		_ = connInfo.Conn.WriteMessage(message)
-		return true
-	})
-}
-
-// Multicast 定向群发消息（应用层调用）
-func (cm *ConnManager) Multicast(connIDs []string, message string) {
-	for _, connID := range connIDs {
-		if connInfo, exists := cm.connMap.Load(connID); exists {
-			info := connInfo.(*ConnInfo)
-			_ = info.Conn.WriteMessage(message)
-		} else {
-			logger.Warn("定向群发失败：连接不存在", "connID", connID)
-		}
+	// 新增：通知连接关闭事件
+	// 通知连接关闭事件
+	if connInfo != nil {
+		m.eventMgr.NotifyDisconnect(connInfo, reason)
 	}
 }
 
-// SendToConnID 给单个ConnID发送消息（应用层调用）
-func (cm *ConnManager) SendToConnID(connID string, message string) error {
-	connInfo, exists := cm.connMap.Load(connID)
-	if !exists {
-		return errors.New("connection not found: " + connID)
-	}
-	info := connInfo.(*ConnInfo)
-	return info.Conn.WriteMessage(message)
-}
+// SetConnAttr 设置连接属性
+func (m *ConnManager) SetConnAttr(connID, key string, value interface{}) {
+	m.attrLock.Lock()
+	defer m.attrLock.Unlock()
 
-// SetConnAttr 设置连接自定义属性（应用层调用）
-func (cm *ConnManager) SetConnAttr(connID string, key string, value interface{}) {
-	if connInfo, exists := cm.connMap.Load(connID); exists {
-		info := connInfo.(*ConnInfo)
-		info.attrs.Store(key, value)
+	if attrs, ok := m.connAttrs[connID]; ok {
+		attrs[key] = value
 	}
 }
 
-// GetConnAttr 获取连接自定义属性（应用层调用）
-func (cm *ConnManager) GetConnAttr(connID string, key string) (interface{}, bool) {
-	if connInfo, exists := cm.connMap.Load(connID); exists {
-		info := connInfo.(*ConnInfo)
-		return info.attrs.Load(key)
+// GetConnAttr 获取连接属性
+func (m *ConnManager) GetConnAttr(connID, key string) (interface{}, bool) {
+	m.attrLock.RLock()
+	defer m.attrLock.RUnlock()
+
+	if attrs, ok := m.connAttrs[connID]; ok {
+		value, ok := attrs[key]
+		return value, ok
 	}
 	return nil, false
 }
 
-// CloseConnByConnID 主动关闭指定连接（应用层调用，触发下线事件）
-func (cm *ConnManager) CloseConnByConnID(connID string, closeReason string) {
-	cm.RemoveConn(connID, closeReason)
+// SendToConnID 给指定连接发送消息
+func (m *ConnManager) SendToConnID(connID, message string) error {
+	m.connLock.RLock()
+	conn, ok := m.conns[connID]
+	m.connLock.RUnlock()
+
+	if !ok {
+		return ErrConnNotFound
+	}
+
+	return conn.WriteMessage(message)
+}
+
+// Multicast 给多个连接发送消息
+func (m *ConnManager) Multicast(connIDs []string, message string) {
+	for _, connID := range connIDs {
+		if err := m.SendToConnID(connID, message); err != nil {
+			// 连接不存在或已关闭，忽略错误
+		}
+	}
+}
+
+// GetConnCount 获取连接数
+func (m *ConnManager) GetConnCount() int32 {
+	return atomic.LoadInt32(&m.connCount)
+}
+
+// IsConnAlive 检查连接是否存活
+func (m *ConnManager) IsConnAlive(connID string) bool {
+	m.connLock.RLock()
+	defer m.connLock.RUnlock()
+
+	_, ok := m.conns[connID]
+	return ok
+}
+
+// CloseConnByConnID 主动(手动)关闭指定连接
+// 示例：err := websocket.GetGlobalConnManager().CloseConnByConnID(connID, "手动关闭")
+func (m *ConnManager) CloseConnByConnID(connID, reason string) error {
+	m.connLock.Lock()
+	conn, ok := m.conns[connID]
+	if !ok {
+		m.connLock.Unlock()
+		return ErrConnNotFound
+	}
+	// 先从管理器中移除
+	connInfo := m.connInfos[connID]
+	delete(m.conns, connID)
+	delete(m.connInfos, connID)
+	m.connLock.Unlock()
+
+	// 移除连接属性
+	m.attrLock.Lock()
+	delete(m.connAttrs, connID)
+	m.attrLock.Unlock()
+
+	// 减少连接计数
+	atomic.AddInt32(&m.connCount, -1)
+
+	// 通知连接关闭事件
+	if connInfo != nil {
+		m.eventMgr.NotifyDisconnect(connInfo, reason)
+	}
+
+	// 关闭底层连接
+	return conn.Close()
+}
+
+// GetGlobalConnManager 获取全局连接管理器（延迟初始化）
+func GetGlobalConnManager() *ConnManager {
+	once.Do(func() {
+		globalConnManager = NewConnManager()
+	})
+	return globalConnManager
+}
+
+// generateConnID 生成唯一的连接ID
+func generateConnID() string {
+	return fmt.Sprintf("%d_%d", time.Now().UnixNano(), rand.Intn(10000))
 }

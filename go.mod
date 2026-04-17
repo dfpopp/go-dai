@@ -6,6 +6,7 @@ require (
 	github.com/elastic/go-elasticsearch/v8 v8.19.0
 	github.com/go-redis/redis v6.15.9+incompatible
 	github.com/go-sql-driver/mysql v1.9.3
+	github.com/google/uuid v1.6.0
 	go.mongodb.org/mongo-driver v1.17.6
 	golang.org/x/text v0.31.0
 	google.golang.org/grpc v1.77.0

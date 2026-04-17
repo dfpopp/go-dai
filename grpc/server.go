@@ -190,7 +190,7 @@ func unaryInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServ
 }
 
 // 内部方法：提取Server实例（简化实现，实际可通过自定义上下文传递）
-func extractServerFromContext(ctx context.Context) *Server {
+func extractServerFromContext(_ context.Context) *Server {
 	// 此处为简化实现，实际项目中可通过grpc.NewContextWithValue传递Server实例
 	return nil
 }
@@ -198,7 +198,7 @@ func extractServerFromContext(ctx context.Context) *Server {
 // 内部方法：合并响应数据
 func mergeResponse(originResp interface{}, frameResp map[string]interface{}) interface{} {
 	// 兼容原有响应和框架响应，保持一致性
-	if frameResp == nil || len(frameResp) == 0 {
+	if len(frameResp) == 0 {
 		return originResp
 	}
 	// 实际项目中可根据业务需求合并响应字段

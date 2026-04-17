@@ -2,20 +2,22 @@ package http
 
 import (
 	"net/http"
+	"sync"
 )
 
 // Router HTTP路由器（框架内置，负责路由注册、映射存储与中间件链构建）
 type Router struct {
-	mux               *http.ServeMux         // 系统ServeMux，负责HTTP请求分发
-	handlers          map[string]HandlerFunc // 存储「method+path」与处理器的映射
-	globalMiddlewares []MiddlewareFunc       // 全局中间件
+	mux               *http.ServeMux   // 系统ServeMux，负责HTTP请求分发
+	handlers          sync.Map         // 使用并发安全的sync.Map
+	globalMiddlewares []MiddlewareFunc // 全局中间件
+	mu                sync.RWMutex     // 保护globalMiddlewares的读写
 }
 
 // NewRouter 创建HTTP路由器实例
 func NewRouter() *Router {
 	return &Router{
 		mux:               http.NewServeMux(),
-		handlers:          make(map[string]HandlerFunc),
+		handlers:          sync.Map{},
 		globalMiddlewares: make([]MiddlewareFunc, 0),
 	}
 }
@@ -60,7 +62,7 @@ func (r *Router) Handle(method, path string, handler HandlerFunc, localMiddlewar
 	// 2. 生成唯一路由键（method + path）
 	routeKey := method + " " + path
 	// 3. 存储路由映射
-	r.handlers[routeKey] = chainHandler
+	r.handlers.Store(routeKey, chainHandler)
 	// 4. 注册到系统ServeMux
 	r.mux.HandleFunc(path, r.wrapHandler(chainHandler))
 }

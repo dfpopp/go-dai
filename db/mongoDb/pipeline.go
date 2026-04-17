@@ -18,28 +18,28 @@ func NewPipelineBuilder() *PipelineBuilder {
 }
 
 // Match 添加$match阶段（查询条件）
-// where: 匹配条件，如bson.D{{"year", bson.M{"$gte": 2020}}}
+// where: 匹配条件，如bson.D{{Key: "year", Value: bson.M{"$gte": 2020}}}
 func (b *PipelineBuilder) Match(where bson.D) *PipelineBuilder {
 	if len(where) > 0 {
-		b.pipeline = append(b.pipeline, bson.D{{"$match", where}})
+		b.pipeline = append(b.pipeline, bson.D{{Key: "$match", Value: where}})
 	}
 	return b
 }
 
 // Group 添加$group阶段（分组规则）
-// group: 分组规则，如bson.D{{"_id", "$name"}, {"amount", bson.D{{"$sum", "$amount"}}}}
+// group: 分组规则，如bson.D{{Key: "_id", Value: "$name"}, {Key: "amount", Value: bson.D{{Key: "$sum", Value: "$amount"}}}}
 func (b *PipelineBuilder) Group(group bson.D) *PipelineBuilder {
 	if len(group) > 0 {
-		b.pipeline = append(b.pipeline, bson.D{{"$group", group}})
+		b.pipeline = append(b.pipeline, bson.D{{Key: "$group", Value: group}})
 	}
 	return b
 }
 
 // Sort 添加$sort阶段（排序规则）
-// sort: 排序规则，如bson.D{{"_id", 1}, {"amount", -1}}
+// sort: 排序规则，如bson.D{{Key: "_id", Value: 1}, {Key: "amount", Value: -1}}
 func (b *PipelineBuilder) Sort(sort bson.D) *PipelineBuilder {
 	if len(sort) > 0 {
-		b.pipeline = append(b.pipeline, bson.D{{"$sort", sort}})
+		b.pipeline = append(b.pipeline, bson.D{{Key: "$sort", Value: sort}})
 	}
 	return b
 }
@@ -48,7 +48,7 @@ func (b *PipelineBuilder) Sort(sort bson.D) *PipelineBuilder {
 // project: 投影规则，如bson.M{"product": "$_id", "amount": "$amount"}
 func (b *PipelineBuilder) Project(project interface{}) *PipelineBuilder {
 	if project != nil {
-		b.pipeline = append(b.pipeline, bson.D{{"$project", project}})
+		b.pipeline = append(b.pipeline, bson.D{{Key: "$project", Value: project}})
 	}
 	return b
 }
@@ -56,7 +56,7 @@ func (b *PipelineBuilder) Project(project interface{}) *PipelineBuilder {
 // Skip 添加$skip阶段（跳过条数）
 func (b *PipelineBuilder) Skip(skip int64) *PipelineBuilder {
 	if skip > 0 {
-		b.pipeline = append(b.pipeline, bson.D{{"$skip", skip}})
+		b.pipeline = append(b.pipeline, bson.D{{Key: "$skip", Value: skip}})
 	}
 	return b
 }
@@ -64,13 +64,13 @@ func (b *PipelineBuilder) Skip(skip int64) *PipelineBuilder {
 // Limit 添加$limit阶段（限制条数）
 func (b *PipelineBuilder) Limit(limit int64) *PipelineBuilder {
 	if limit > 0 {
-		b.pipeline = append(b.pipeline, bson.D{{"$limit", limit}})
+		b.pipeline = append(b.pipeline, bson.D{{Key: "$limit", Value: limit}})
 	}
 	return b
 }
 
 // AppendStage 追加自定义管道阶段（如$lookup/$unwind等）
-// stage: 自定义阶段，如bson.D{{"$lookup", bson.D{{"from", "table"}, {"localField", "id"}, {"foreignField", "fid"}, {"as", "data"}}}}
+// stage: 自定义阶段，如bson.D{{Key: "$lookup", Value: bson.D{{Key: "from", Value: "table"}, {Key: "localField", Value: "id"}, {Key: "foreignField", Value: "fid"}, {Key: "as", Value: "data"}}}}
 func (b *PipelineBuilder) AppendStage(stage bson.D) *PipelineBuilder {
 	if len(stage) > 0 {
 		b.pipeline = append(b.pipeline, stage)

@@ -5,7 +5,29 @@ import (
 	"strings"
 )
 
-var validTableRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$`)
+var validTableRegex = regexp.MustCompile(`^` +
+	// 库名部分（可选）：支持 `库名` 或 库名 格式
+	`(?:` +
+	`(?:` +
+	// 带反引号的库名：`开头 + 合法字符 + `结尾
+	// 合法字符：字母/下划线开头，后跟字母/数字/下划线
+	"`[a-zA-Z_][a-zA-Z0-9_]*`" +
+	`|` +
+	// 不带反引号的库名
+	`[a-zA-Z_][a-zA-Z0-9_]*` +
+	`)` +
+	// 库名和表名之间的点
+	`\.` +
+	`)?` +
+	// 表名部分（必填）：支持 `表名` 或 表名 格式
+	`(?:` +
+	// 带反引号的表名
+	"`[a-zA-Z_][a-zA-Z0-9_]*`" +
+	`|` +
+	// 不带反引号的表名
+	`[a-zA-Z_][a-zA-Z0-9_]*` +
+	`)` +
+	`$`)
 
 // var validFieldRegex = regexp.MustCompile(`^(?:(?:COUNT|SUM|AVG|MIN|MAX|COUNT_DISTINCT|STDDEV|VARIANCE|MEDIAN|GROUP_CONCAT|STRING_AGG|DATE_TRUNC|DATE_PART|BIT_AND|BIT_OR|BIT_XOR)\((?:DISTINCT\s+)?(?:\*|[a-zA-Z_][a-zA-Z0-9_.]*)\)|(?:CONCAT|CONCAT_WS|TRIM|SUBSTRING|LOWER|UPPER|IF|COALESCE|ABS|ROUND|DATE_FORMAT)\((?:\s*(?:[a-zA-Z_][a-zA-Z0-9_.]*|\?)\s*,?)*\)|[a-zA-Z_][a-zA-Z0-9_.]*)(?:\s+AS\s+[a-zA-Z_][a-zA-Z0-9_]*)?$`)
 var validFieldRegex = regexp.MustCompile(`(?i)(?:
@@ -28,7 +50,14 @@ var validWhereRegex = regexp.MustCompile(`(?i)
     |(?:['"]).*?['"]                        # 单双引号（参数化查询不应出现）
     |(?:\$\{|\}\$)                          # 模板注入
 `)
-var validOrderRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*(\s+(asc|ASC|desc|DESC))?(,\s*[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*(\s+(asc|ASC|desc|DESC))?)*$`)
+var validOrderRegex = regexp.MustCompile(`^(?:` +
+	// 单个排序项：支持`字段名`/`字段名`.`子字段名` 格式，可选asc/desc
+	"`?[a-zA-Z_][a-zA-Z0-9_]*`?(?:\\.`?[a-zA-Z_][a-zA-Z0-9_]*`?)*" +
+	// 可选的排序方向（asc/desc，大小写不敏感）
+	"(?:\\s+(?:asc|ASC|desc|DESC))?" +
+	// 多个排序项的分隔符（逗号+可选空格）+ 重复的排序项
+	")(?:,\\s*(?:`?[a-zA-Z_][a-zA-Z0-9_]*`?(?:\\.`?[a-zA-Z_][a-zA-Z0-9_]*`?)*" +
+	"(?:\\s+(?:asc|ASC|desc|DESC))?)?)*$")
 var validGroupRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?(,\s*[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?)*$`)
 var validIncRegex = regexp.MustCompile(`^[a-zA-Z0-9_=?+\-\s]+(\.[a-zA-Z0-9_=?+\-\s]+)?$`)
 

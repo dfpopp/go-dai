@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
+	"sync"
+	"time"
+
 	"github.com/dfpopp/go-dai/config"
 	"github.com/dfpopp/go-dai/function"
 	"github.com/dfpopp/go-dai/logger"
@@ -12,12 +16,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
-	"os"
-	"os/signal"
-	"runtime"
-	"sync"
-	"syscall"
-	"time"
 )
 
 // Db MongoDB操作类，支持链式调用
@@ -50,6 +48,20 @@ var multiClientPool sync.Map
 
 // InitMongoDB 初始化MongoDB连接池，支持多配置
 func InitMongoDB() {
+	initMongoDBConnections()
+
+	// 注册配置变更钩子，当数据库配置变更时重新初始化连接
+	config.RegisterConfigChangeHook(func(configType string, config interface{}) error {
+		if configType == "database" {
+			logger.Info("数据库配置变更，重新初始化MongoDB连接...")
+			return reinitMongoDBConnections()
+		}
+		return nil
+	})
+}
+
+// initMongoDBConnections 初始化MongoDB连接
+func initMongoDBConnections() {
 	cfgMap := config.GetMongodbConfig()
 	for dbKey, cfg := range cfgMap {
 		client, err := connect(cfg)
@@ -59,6 +71,50 @@ func InitMongoDB() {
 			multiClientPool.Store(dbKey, DbObj{Client: client, DbName: cfg.Dbname, Pre: cfg.Pre})
 		}
 	}
+}
+
+// reinitMongoDBConnections 重新初始化MongoDB连接（平滑切换）
+func reinitMongoDBConnections() error {
+	cfgMap := config.GetMongodbConfig()
+
+	// 存储需要关闭的旧连接
+	oldConnections := make(map[string]DbObj)
+
+	// 先收集所有旧连接
+	multiClientPool.Range(func(key, value interface{}) bool {
+		dbKey := key.(string)
+		dbObj := value.(DbObj)
+		oldConnections[dbKey] = dbObj
+		return true
+	})
+
+	// 创建新连接
+	for dbKey, cfg := range cfgMap {
+		client, err := connect(cfg)
+		if err != nil {
+			logger.Error(fmt.Sprintf("MongoDB连接初始化失败（%s）: %v", dbKey, err))
+		} else {
+			multiClientPool.Store(dbKey, DbObj{Client: client, DbName: cfg.Dbname, Pre: cfg.Pre})
+			// 从旧连接映射中移除已更新的连接
+			delete(oldConnections, dbKey)
+		}
+	}
+
+	// 延迟关闭旧连接（给现有操作30秒时间完成）
+	go func() {
+		time.Sleep(30 * time.Second)
+		for dbKey, dbObj := range oldConnections {
+			disconnectCtx := context.Background()
+			if err := dbObj.Client.Disconnect(disconnectCtx); err != nil {
+				logger.Error("关闭旧MongoDB连接失败:", "dbKey", dbKey, "error", err)
+			} else {
+				logger.Info("旧MongoDB连接已关闭:", "dbKey", dbKey)
+			}
+			multiClientPool.Delete(dbKey)
+		}
+	}()
+
+	return nil
 }
 
 // connect 建立MongoDB连接
@@ -652,24 +708,6 @@ func (m *Db) clearData(isClearTx bool) {
 	if isClearTx {
 		m.TxSession = nil
 	}
-}
-
-// 注册服务退出钩子（监听信号，自动关闭 mongoDb 连接）
-func registerShutdownHook() {
-	sigCh := make(chan os.Signal, 1)
-	// 监听常见的退出信号：Ctrl+C、kill 命令
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
-
-	go func() {
-		<-sigCh // 等待信号
-		fmt.Println("\n收到退出信号，开始关闭 mongoDb 连接...")
-		if err := CloseMongoDb(); err != nil {
-			fmt.Printf("mongoDb 连接关闭失败: %v\n", err)
-		} else {
-			fmt.Println("所有 mongoDb 连接已关闭")
-		}
-		os.Exit(0)
-	}()
 }
 
 // CloseMongoDb 关闭所有 mongoDb 连接（供外部调用，如服务停止时）

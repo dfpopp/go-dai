@@ -3,6 +3,13 @@ package bootstrap
 import (
 	"errors"
 	"fmt"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"runtime"
+	"sync"
+	"syscall"
+
 	"github.com/dfpopp/go-dai/base"
 	"github.com/dfpopp/go-dai/config"
 	"github.com/dfpopp/go-dai/db"
@@ -10,12 +17,6 @@ import (
 	"github.com/dfpopp/go-dai/http"
 	"github.com/dfpopp/go-dai/logger"
 	"github.com/dfpopp/go-dai/websocket"
-	"os"
-	"os/signal"
-	"path/filepath"
-	"runtime"
-	"sync"
-	"syscall"
 )
 
 // ServiceType 服务类型枚举
@@ -32,9 +33,10 @@ type BootConfig struct {
 	AppName            string          // 应用名（如api/admin）
 	AppConfigPath      string          // 应用配置文件路径
 	DatabaseConfigPath string          // 数据库配置文件路径
-	CustomConfigPaths  []string        // 自定义配置文件路径（可选）
+	CustomConfigPath   string          // 自定义配置文件路径（可选）
 	EnableServices     []ServiceType   // 需要启动的服务类型
 	Router             base.BaseRouter // 应用路由实例
+	ShutdownFunc       func()          // 服务关闭时的回调函数（可选）
 }
 
 // BootContext 启动上下文（存储已启动的服务）
@@ -63,6 +65,11 @@ func Boot(cfg *BootConfig) (*BootContext, error) {
 	if err := config.LoadDatabaseConfig(cfg.DatabaseConfigPath); err != nil {
 		return nil, fmt.Errorf("加载数据库配置失败: %v", err)
 	}
+	if cfg.CustomConfigPath != "" {
+		if err := config.LoadCustomConfig(cfg.CustomConfigPath); err != nil {
+			return nil, fmt.Errorf("加载自定义配置失败: %v", err)
+		}
+	}
 	// 3. 初始化日志
 	if err := logger.InitLogger(cfg.AppName, appPath); err != nil {
 		return nil, fmt.Errorf("初始化日志失败: %v", err)
@@ -89,13 +96,17 @@ func Boot(cfg *BootConfig) (*BootContext, error) {
 	bootCtx := &BootContext{}
 	var wg sync.WaitGroup
 
+	// 错误通道，用于传递服务启动错误
+	errChan := make(chan error, len(cfg.EnableServices))
+	// 服务启动完成通道
+	doneChan := make(chan struct{})
+
 	for _, serviceType := range cfg.EnableServices {
 		wg.Add(1)
 		switch serviceType {
 		case ServiceTypeHTTP:
 			// 初始化HTTP服务
 			bootCtx.HTTPServer = http.NewServer(cfg.AppName)
-			//bootCtx.HTTPServer.Use(http.CORS(), http.Recovery())
 			// 注册路由
 			cfg.Router.RegisterHTTPRoutes(bootCtx.HTTPServer)
 			// 异步启动
@@ -103,10 +114,10 @@ func Boot(cfg *BootConfig) (*BootContext, error) {
 				defer wg.Done()
 				if err := bootCtx.HTTPServer.Run(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 					logger.Error(fmt.Errorf("HTTP服务启动失败: %v", err))
+					errChan <- fmt.Errorf("HTTP服务启动失败: %v", err)
 				}
 			}()
 			logger.Info("HTTP服务已初始化，监听地址：", bootCtx.HTTPServer.Config().Addr)
-			break
 		case ServiceTypeWS:
 			// 初始化WebSocket服务
 			bootCtx.WSServer = websocket.NewServer(cfg.AppName)
@@ -116,11 +127,12 @@ func Boot(cfg *BootConfig) (*BootContext, error) {
 			go func() {
 				defer wg.Done()
 				if err := bootCtx.WSServer.Run(); err != nil && !errors.Is(err, websocket.ErrServerClosed) {
+					err := fmt.Errorf("WebSocket服务启动失败: %v", err)
 					logger.Error(fmt.Errorf("WebSocket服务启动失败: %v", err))
+					errChan <- fmt.Errorf("WebSocket服务启动失败: %v", err)
 				}
 			}()
 			logger.Info("WebSocket服务已初始化，监听地址：", bootCtx.WSServer.Config().Addr)
-			break
 		case ServiceTypeGRPC:
 			// 初始化gRPC服务
 			bootCtx.GRPCServer = grpc.NewServer(cfg.AppName)
@@ -131,10 +143,10 @@ func Boot(cfg *BootConfig) (*BootContext, error) {
 				defer wg.Done()
 				if err := bootCtx.GRPCServer.Run(); err != nil {
 					logger.Error(fmt.Errorf("gRPC服务启动失败: %v", err))
+					errChan <- fmt.Errorf("gRPC服务启动失败: %v", err)
 				}
 			}()
 			logger.Info("gRPC服务已初始化，监听地址：", bootCtx.GRPCServer.Config().Addr)
-			break
 		default:
 			return nil, fmt.Errorf("未知服务类型: %s", serviceType)
 		}
@@ -147,25 +159,57 @@ func Boot(cfg *BootConfig) (*BootContext, error) {
 		<-quit
 
 		logger.Info("应用开始优雅停机...")
-		// 停止HTTP服务
+		// 1. 执行业务层清理逻辑
+		if cfg.ShutdownFunc != nil {
+			logger.Info("执行业务层清理逻辑...")
+			cfg.ShutdownFunc()
+		}
+		// 2. 关闭数据库连接
+		if len(startDb) > 0 {
+			logger.Info("关闭数据库连接...")
+			db.CloseDb(startDb)
+		}
+		// 3. 停止HTTP服务
 		if bootCtx.HTTPServer != nil {
 			_ = bootCtx.HTTPServer.Stop()
 		}
-		// 停止WebSocket服务
+		// 4. 停止WebSocket服务
 		if bootCtx.WSServer != nil {
 			_ = bootCtx.WSServer.Stop()
 		}
-		// 停止gRPC服务
-		//if bootCtx.GRPCServer != nil {
-		//	bootCtx.GRPCServer.Stop()
-		//}
+		// 5. 停止gRPC服务
+		if bootCtx.GRPCServer != nil {
+			bootCtx.GRPCServer.Stop()
+		}
 		logger.Info("应用已完成停机")
 	}()
-
 	// 等待所有服务启动完成
-	wg.Wait()
-	return bootCtx, nil
+	go func() {
+		wg.Wait()
+		close(doneChan)
+	}()
+
+	// 等待服务启动完成或错误发生
+	select {
+	case <-doneChan:
+		// 所有服务启动成功
+		return bootCtx, nil
+	case err := <-errChan:
+		// 服务启动失败，停止所有已启动的服务
+		if bootCtx.HTTPServer != nil {
+			_ = bootCtx.HTTPServer.Stop()
+		}
+		if bootCtx.WSServer != nil {
+			_ = bootCtx.WSServer.Stop()
+		}
+		if bootCtx.GRPCServer != nil {
+			bootCtx.GRPCServer.Stop()
+		}
+		return nil, err
+	}
 }
+
+// BootCron 定时任务启动入口
 func BootCron(cfg *BootConfig) error {
 	appPath := ""
 	_, entryFile, _, ok := runtime.Caller(1)
@@ -183,6 +227,11 @@ func BootCron(cfg *BootConfig) error {
 	}
 	if err := config.LoadDatabaseConfig(cfg.DatabaseConfigPath); err != nil {
 		return fmt.Errorf("加载数据库配置失败: %v", err)
+	}
+	if cfg.CustomConfigPath != "" {
+		if err := config.LoadCustomConfig(cfg.CustomConfigPath); err != nil {
+			return fmt.Errorf("加载自定义配置失败: %v", err)
+		}
 	}
 	// 3. 初始化日志
 	if err := logger.InitLogger(cfg.AppName, appPath); err != nil {
@@ -206,12 +255,22 @@ func BootCron(cfg *BootConfig) error {
 	if len(startDb) > 0 {
 		db.StartDb(startDb)
 	}
-	// 6. 优雅停机监听
+	// 5. 优雅停机监听
 	go func() {
 		quit := make(chan os.Signal, 1)
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		<-quit
 		logger.Info("应用开始优雅停机...")
+		// 1. 执行业务层清理逻辑
+		if cfg.ShutdownFunc != nil {
+			logger.Info("执行业务层清理逻辑...")
+			cfg.ShutdownFunc()
+		}
+		// 2. 关闭数据库连接
+		if len(startDb) > 0 {
+			logger.Info("关闭数据库连接...")
+			db.CloseDb(startDb)
+		}
 		logger.Info("应用已完成停机")
 	}()
 	return nil

@@ -1,38 +1,63 @@
 package grpc
 
 import (
+	"context"
 	"encoding/json"
-	"github.com/dfpopp/go-dai/netContext"
-	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/peer"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
+
+	"github.com/dfpopp/go-dai/netContext"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 )
 
 // Context gRPC上下文（实现netContext.Context和netContext.RequestInfo接口）
 type Context struct {
-	Req      *http.Request          // 兼容原有上下文结构（实际gRPC场景可忽略，保持接口一致性）
-	MD       metadata.MD            // gRPC元数据（对应HTTP Header）
-	PeerInfo *peer.Peer             // 客户端信息（用于获取IP）
-	Method   string                 // gRPC服务方法名（如/merchant.MemberService/Login）
-	Path     string                 // 等同于Method，保持接口一致性
-	params   map[string]string      // 自定义参数（对齐HTTP/WS）
-	rawData  []byte                 // 原始请求数据（对齐HTTP Body/WS消息）
-	respData map[string]interface{} // 响应数据
+	Req          *http.Request          // 兼容原有上下文结构（实际gRPC场景可忽略，保持接口一致性）
+	MD           metadata.MD            // gRPC元数据（对应HTTP Header）
+	PeerInfo     *peer.Peer             // 客户端信息（用于获取IP）
+	Method       string                 // gRPC服务方法名（如/merchant.MemberService/Login）
+	Path         string                 // 等同于Method，保持接口一致性
+	params       map[string]string      // 自定义参数（对齐HTTP/WS）
+	rawData      []byte                 // 原始请求数据（对齐HTTP Body/WS消息）
+	respData     map[string]interface{} // 响应数据
+	ctx          context.Context
+	cancel       context.CancelFunc
+	values       map[string]interface{}
+	cleanupFuncs []func() // 清理函数列表
 }
 
 // NewContext 创建gRPC上下文实例
 func NewContext(md metadata.MD, peerInfo *peer.Peer, method string, rawData []byte) *Context {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Context{
-		MD:       md,
-		PeerInfo: peerInfo,
-		Method:   method,
-		Path:     method,
-		params:   make(map[string]string),
-		rawData:  rawData,
-		respData: make(map[string]interface{}),
+		MD:           md,
+		PeerInfo:     peerInfo,
+		Method:       method,
+		Path:         method,
+		params:       make(map[string]string),
+		rawData:      rawData,
+		respData:     make(map[string]interface{}),
+		ctx:          ctx,
+		cancel:       cancel,
+		values:       make(map[string]interface{}),
+		cleanupFuncs: make([]func(), 0),
+	}
+}
+
+// RegisterCleanupFunc 注册清理函数
+func (c *Context) RegisterCleanupFunc(f func()) {
+	c.cleanupFuncs = append(c.cleanupFuncs, f)
+}
+
+// Cleanup 执行清理函数
+func (c *Context) Cleanup() {
+	for _, f := range c.cleanupFuncs {
+		f()
 	}
 }
 
@@ -42,6 +67,7 @@ type GRPCHandlerFunc func(netContext.Context)
 // -------------------------- 适配器方法 --------------------------
 func ToGRPCHandler(fn GRPCHandlerFunc) HandlerFunc {
 	return func(ctx *Context) {
+		defer ctx.Cleanup()
 		fn(ctx)
 	}
 }
@@ -62,18 +88,14 @@ func (c *Context) GetPath() string {
 }
 
 func (c *Context) GetClientIP() string {
-	if c.PeerInfo == nil {
+	if c.PeerInfo == nil || c.PeerInfo.Addr == nil {
 		return "unknown"
 	}
-	addr, ok := c.PeerInfo.Addr.(net.Addr)
-	if !ok {
-		return "unknown"
-	}
-	host, _, err := net.SplitHostPort(addr.String())
+	host, _, err := net.SplitHostPort(c.PeerInfo.Addr.String())
 	if err == nil {
 		return host
 	}
-	return addr.String()
+	return c.PeerInfo.Addr.String()
 }
 
 func (c *Context) GetHeader(key string) string {
@@ -180,6 +202,11 @@ func (c *Context) BindJSON(v interface{}) error {
 	return json.Unmarshal(c.rawData, v)
 }
 
+// GetRequest 获取http.Request对象（gRPC不支持，返回错误）
+func (c *Context) GetRequest() (*http.Request, error) {
+	return nil, fmt.Errorf("gRPC context does not support GetRequest method")
+}
+
 func (c *Context) SetParam(key, value string) {
 	c.params[key] = value
 }
@@ -191,4 +218,40 @@ func (c *Context) GetParam(key string) string {
 // GetResponse 获取响应数据（gRPC特有，用于构建返回结果）
 func (c *Context) GetResponse() map[string]interface{} {
 	return c.respData
+}
+
+// Set 设置上下文值
+func (c *Context) Set(key string, value interface{}) {
+	c.values[key] = value
+}
+
+// Get 获取上下文值
+func (c *Context) Get(key string) (interface{}, bool) {
+	value, ok := c.values[key]
+	return value, ok
+}
+
+// Deadline 获取上下文截止时间
+func (c *Context) Deadline() (deadline time.Time, ok bool) {
+	return c.ctx.Deadline()
+}
+
+// Done 获取上下文完成通道
+func (c *Context) Done() <-chan struct{} {
+	return c.ctx.Done()
+}
+
+// Err 获取上下文错误
+func (c *Context) Err() error {
+	return c.ctx.Err()
+}
+
+// Value 获取上下文值
+func (c *Context) Value(key interface{}) interface{} {
+	if keyStr, ok := key.(string); ok {
+		if value, exists := c.values[keyStr]; exists {
+			return value
+		}
+	}
+	return c.ctx.Value(key)
 }

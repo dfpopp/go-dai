@@ -1,10 +1,9 @@
 package config
 
 import (
-	"encoding/json"
+	"fmt"
 	"os"
-	"path/filepath"
-	"sync"
+	"time"
 )
 
 type AppConfig struct {
@@ -21,6 +20,7 @@ type HTTPConfig struct {
 	Addr           string `json:"addr"`
 	ReadTimeout    int    `json:"read_timeout"`
 	WriteTimeout   int    `json:"write_timeout"`
+	IdleTimeout    int    `json:"idle_timeout"`
 	MaxHeaderBytes int    `json:"max_header_bytes"`
 	SSL            bool   `json:"ssl"`
 	SSLCertFile    string `json:"ssl_cert_file"`
@@ -143,105 +143,134 @@ type EsConfig struct {
 	ResponseHeaderTimeout int    `json:"response_header_timeout"`    //响应头超时
 	TLSHandshakeTimeout   int    `json:"tls_handshake_timeout"`      // TLS握手超时
 }
-type PostLoadHook func() error
+
+// ConfigChangeHook 配置变更钩子函数类型
+type ConfigChangeHook func(configType string, config interface{}) error
 
 var (
 	appConfigMap       = make(map[string]*AppConfig)
 	DbConfig           *DatabaseConfig
-	appConfigOnce      sync.Once
-	databaseConfigOnce sync.Once
-	postLoadHooks      []PostLoadHook // 存储用户注册的钩子函数
+	configFileWatchers = make(map[string]*ConfigFileWatcher) // 配置文件监听器
+	configHooks        = make([]ConfigChangeHook, 0)         // 配置变更钩子
 )
 
-// RegisterPostLoadHook 注册配置加载后的钩子函数
-func RegisterPostLoadHook(hook PostLoadHook) {
-	postLoadHooks = append(postLoadHooks, hook)
+// RegisterConfigChangeHook 注册配置变更钩子
+func RegisterConfigChangeHook(hook ConfigChangeHook) {
+	configHooks = append(configHooks, hook)
 }
 
-// LoadAppConfig 加载应用配置
-// LoadAppConfig 单例加载应用配置（使用appConfigOnce）
-func LoadAppConfig(filePath string, appNames ...string) error {
-	var err error
-	appConfigOnce.Do(func() {
-		// 读取配置文件
-		data, readErr := os.ReadFile(filepath.Clean(filePath))
-		if readErr != nil {
-			err = readErr
-			return
+// notifyConfigChange 通知配置变更
+func notifyConfigChange(configType string, config interface{}) {
+	for _, hook := range configHooks {
+		if err := hook(configType, config); err != nil {
+			fmt.Printf("执行配置变更钩子失败: %v\n", err)
 		}
+	}
+}
 
-		// 解析配置
-		var cfgMap map[string]*AppConfig
-		if unmarshalErr := json.Unmarshal(data, &cfgMap); unmarshalErr != nil {
-			err = unmarshalErr
-			return
-		}
+// ConfigFileWatcher 配置文件监听器
+type ConfigFileWatcher struct {
+	filePath      string
+	lastModTime   time.Time
+	watchInterval time.Duration
+	stopChan      chan struct{}
+	isRunning     bool
+}
 
-		// 加载指定应用配置
-		for _, appName := range appNames {
-			if cfg, ok := cfgMap[appName]; ok {
-				appConfigMap[appName] = cfg
-			}
-		}
-		// 执行配置加载后钩子（新增核心逻辑）
-		if len(postLoadHooks) > 0 {
-			for _, hook := range postLoadHooks {
-				if hookErr := hook(); hookErr != nil {
-					return
+// NewConfigFileWatcher 创建配置文件监听器
+func NewConfigFileWatcher(filePath string, interval time.Duration) *ConfigFileWatcher {
+	return &ConfigFileWatcher{
+		filePath:      filePath,
+		watchInterval: interval,
+		stopChan:      make(chan struct{}),
+	}
+}
+
+// Start 启动配置文件监听
+func (w *ConfigFileWatcher) Start(configType string) {
+	if w.isRunning {
+		return
+	}
+	w.isRunning = true
+
+	// 获取初始修改时间
+	info, err := os.Stat(w.filePath)
+	if err == nil {
+		w.lastModTime = info.ModTime()
+	}
+
+	go func() {
+		ticker := time.NewTicker(w.watchInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				info, err := os.Stat(w.filePath)
+				if err != nil {
+					continue
 				}
+
+				// 检查文件是否被修改
+				if info.ModTime().After(w.lastModTime) {
+					w.lastModTime = info.ModTime()
+					fmt.Printf("配置文件已修改，重新加载: %s\n", w.filePath)
+
+					// 重新加载配置
+					err := w.reloadConfig(configType)
+					if err != nil {
+						fmt.Printf("重新加载配置失败: %v\n", err)
+						// 继续监听，不停止整个循环
+						continue
+					}
+				}
+			case <-w.stopChan:
+				w.isRunning = false
+				return
 			}
 		}
-	})
-	return err
+	}()
 }
 
-// LoadDatabaseConfig 加载数据库配置
-func LoadDatabaseConfig(filePath string) error {
-	var err error
-	databaseConfigOnce.Do(func() {
-		data, readErr := os.ReadFile(filepath.Clean(filePath))
-		if readErr != nil {
-			err = readErr
-			return
+// Stop 停止配置文件监听
+func (w *ConfigFileWatcher) Stop() {
+	if w.isRunning {
+		w.stopChan <- struct{}{}
+	}
+}
+
+// reloadConfig 重新加载配置
+func (w *ConfigFileWatcher) reloadConfig(configType string) error {
+	switch configType {
+	case "app":
+		// 重新加载应用配置
+		// 注意：这里需要重新解析配置文件并更新appConfigMap
+		// 为了简化，我们可以创建一个新的加载函数
+		err := LoadAppConfig(w.filePath)
+		if err != nil {
+			return err
 		}
+		// 通知配置变更
+		notifyConfigChange("app", appConfigMap)
 
-		var cfg DatabaseConfig
-		if unmarshalErr := json.Unmarshal(data, &cfg); unmarshalErr != nil {
-			err = unmarshalErr
-			return
+	case "database":
+		// 重新加载数据库配置
+		err := LoadDatabaseConfig(w.filePath)
+		if err != nil {
+			return err
 		}
+		// 通知配置变更
+		notifyConfigChange("database", DbConfig)
 
-		DbConfig = &cfg
-	})
-	return err
-}
-
-// GetAppConfig 获取应用配置
-func GetAppConfig(appName string) *AppConfig {
-	return appConfigMap[appName]
-}
-
-// GetDatabaseConfig 获取数据库配置
-func GetDatabaseConfig() *DatabaseConfig {
-	return DbConfig
-}
-
-// GetMysqlConfig 获取mysql数据库配置
-func GetMysqlConfig() map[string]MySQLConfig {
-	return DbConfig.MySQL
-}
-
-// GetEsConfig 获取mysql数据库配置
-func GetEsConfig() map[string]EsConfig {
-	return DbConfig.Es
-}
-
-// GetMongodbConfig 获取数据库配置
-func GetMongodbConfig() map[string]MongodbConfig {
-	return DbConfig.Mongodb
-}
-
-// GetRedisConfig 获取mysql数据库配置
-func GetRedisConfig() map[string]RedisConfig {
-	return DbConfig.Redis
+	case "custom":
+		// 重新加载自定义配置
+		// 直接调用LoadCustomConfig方法，保持与app和database类型的一致性
+		err := LoadCustomConfig(w.filePath)
+		if err != nil {
+			return err
+		}
+		// 通知配置变更
+		notifyConfigChange("custom", customConfig)
+	}
+	return nil
 }

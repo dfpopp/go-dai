@@ -1,5 +1,10 @@
 package netContext
 
+import (
+	"net/http"
+	"time"
+)
+
 // -------------------------- 通用请求信息接口（解耦具体协议） --------------------------
 
 // RequestInfo 通用请求信息接口，抽象所有协议的公共请求属性
@@ -21,9 +26,22 @@ type Context interface {
 	PostFormAll() map[string]string
 	GetBody() ([]byte, error)
 	BindJSON(v interface{}) error
+	GetRequest() (*http.Request, error) // 返回*http.Request，用于获取上传的文件等
 	SetParam(key, value string)
 	GetParam(key string) string
 	GetRequestInfo() RequestInfo // 返回通用请求信息，替代直接返回*http.Request
+	RegisterCleanupFunc(f func()) // 注册清理函数
+	// 上下文管理
+
+	Set(key string, value interface{})
+	Get(key string) (interface{}, bool)
+
+	// 标准context接口兼容
+
+	Deadline() (deadline time.Time, ok bool)
+	Done() <-chan struct{}
+	Err() error
+	Value(key interface{}) interface{}
 }
 
 // GRPCHandlerFunc 通用gRPC处理器签名（框架层定义，应用层复用）
