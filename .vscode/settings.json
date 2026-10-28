@@ -1,8 +1,0 @@
-{
-    "go.gopath": "D:\\golang;C:\\Users\\Administrator\\go",
-    "go.goroot": "C:\\Users\\Administrator\\go\\go1.24.0",
-    "go.toolsEnvVars": {
-        "GOROOT": "C:\\Users\\Administrator\\go\\go1.24.0",
-        "GOPATH": "D:\\golang;C:\\Users\\Administrator\\go"
-    },
-}
