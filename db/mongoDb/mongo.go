@@ -11,38 +11,42 @@ import (
 	"github.com/dfpopp/go-dai/config"
 	"github.com/dfpopp/go-dai/function"
 	"github.com/dfpopp/go-dai/logger"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.mongodb.org/mongo-driver/mongo/readpref"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
 )
 
 // Db MongoDB操作类，支持链式调用
 type Db struct {
-	Client        *mongo.Client              // MongoDB客户端
-	Db            *mongo.Database            // 当前数据库
-	DbPre         string                     //表前缀
-	TxSession     mongo.Session              // 事务会话
-	Collection    string                     // 当前集合名
-	Filter        bson.D                     // 查询条件
-	AggregatePipe mongo.Pipeline             // 聚合管道
-	FindOptions   *options.FindOptions       // 查询选项
-	DeleteOptions *options.DeleteOptions     // 删除选项
-	UpdateOptions *options.UpdateOptions     // 更新选项
-	InsertOptions *options.InsertManyOptions // 批量插入选项
-	Sort          bson.D                     // 排序条件
-	Skip          int64                      // 跳过条数
-	Limit         int64                      // 限制条数
-	Projection    bson.D                     // 字段投影（只返回指定字段）
-	Data          []map[string]interface{}   // 查询结果
-	Err           error                      // 错误存储
+	Client            *mongo.Client                     // MongoDB客户端
+	Db                *mongo.Database                   // 当前数据库
+	DbPre             string                            //表前缀
+	TxSession         *mongo.Session                    // 事务会话（v2起为具体类型）
+	Collection        string                            // 当前集合名
+	Filter            bson.D                            // 查询条件
+	AggregatePipe     mongo.Pipeline                    // 聚合管道
+	FindOptions       *options.FindOptionsBuilder       // 查询选项
+	DeleteOptions     *options.DeleteManyOptionsBuilder // 删除选项（多条）
+	DeleteOneOptions  *options.DeleteOneOptionsBuilder  // 删除选项（单条，v2起One/Many独立）
+	UpdateOptions     *options.UpdateManyOptionsBuilder // 更新选项（多条）
+	UpdateOneOptions  *options.UpdateOneOptionsBuilder  // 更新选项（单条，v2起One/Many独立）
+	InsertOptions     *options.InsertManyOptionsBuilder // 批量插入选项
+	Sort              bson.D                            // 排序条件
+	Skip              int64                             // 跳过条数
+	Limit             int64                             // 限制条数
+	Projection        bson.D                            // 字段投影（只返回指定字段）
+	Data              []map[string]interface{}          // 查询结果
+	SanitizeHtmlField []string                          //需要对html进行消噪的字段列表
+	SanitizeHtmlFunc  SanitizeHtmlFn                    //需要对html进行消噪方法
+	Err               error                             // 错误存储
 }
 type DbObj struct {
 	Client *mongo.Client
 	DbName string
 	Pre    string
 }
+type SanitizeHtmlFn func(string) string
 
 var multiClientPool sync.Map
 
@@ -153,14 +157,14 @@ func connect(cfg config.MongodbConfig) (*mongo.Client, error) {
 	clientOpts.SetMinPoolSize(cfg.MinPoolSize)
 	clientOpts.SetMaxConnIdleTime(time.Duration(cfg.MaxConnIdleTime) * time.Second)
 	clientOpts.SetConnectTimeout(time.Duration(cfg.Timeout) * time.Second)
-	// 建立连接
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.Timeout)*time.Second)
-	defer cancel()
-	client, err := mongo.Connect(ctx, clientOpts)
+	// 建立连接（v2起Connect不再接收ctx，拨号超时由SetConnectTimeout控制）
+	client, err := mongo.Connect(clientOpts)
 	if err != nil {
 		return nil, err
 	}
 	// 校验连接
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.Timeout)*time.Second)
+	defer cancel()
 	if err = client.Ping(ctx, readpref.Primary()); err != nil {
 		return nil, err
 	}
@@ -177,29 +181,35 @@ func GetMongoDB(dbKey string) (*Db, error) {
 	if !ok {
 		return nil, fmt.Errorf("MongoDB连接池[%s]类型错误", dbKey)
 	}
-	// 初始化操作选项
+	// 初始化操作选项（v2起Update/Delete的One与Many选项独立）
 	findOpts := options.Find()
-	deleteOpts := options.Delete()
-	updateOpts := options.Update()
+	deleteOpts := options.DeleteMany()
+	deleteOneOpts := options.DeleteOne()
+	updateOpts := options.UpdateMany()
+	updateOneOpts := options.UpdateOne()
 	insertOpts := options.InsertMany()
 	return &Db{
-		Client:        dbObj.Client,
-		Db:            dbObj.Client.Database(dbObj.DbName),
-		DbPre:         dbObj.Pre,
-		TxSession:     nil,
-		Collection:    "",
-		Filter:        nil,
-		AggregatePipe: nil,
-		FindOptions:   findOpts,
-		DeleteOptions: deleteOpts,
-		UpdateOptions: updateOpts,
-		InsertOptions: insertOpts,
-		Sort:          nil,
-		Skip:          0,
-		Limit:         0,
-		Projection:    nil,
-		Data:          nil,
-		Err:           nil,
+		Client:            dbObj.Client,
+		Db:                dbObj.Client.Database(dbObj.DbName),
+		DbPre:             dbObj.Pre,
+		TxSession:         nil,
+		Collection:        "",
+		Filter:            nil,
+		AggregatePipe:     nil,
+		FindOptions:       findOpts,
+		DeleteOptions:     deleteOpts,
+		DeleteOneOptions:  deleteOneOpts,
+		UpdateOptions:     updateOpts,
+		UpdateOneOptions:  updateOneOpts,
+		InsertOptions:     insertOpts,
+		Sort:              nil,
+		Skip:              0,
+		Limit:             0,
+		Projection:        nil,
+		Data:              nil,
+		SanitizeHtmlField: nil,
+		SanitizeHtmlFunc:  nil,
+		Err:               nil,
 	}, nil
 }
 func (m *Db) SetDbName(dbName string) *Db {
@@ -222,9 +232,8 @@ func (m *Db) Begin(ctx context.Context) error {
 	if m.Client == nil {
 		return errors.New("MongoDB客户端未初始化")
 	}
-	// 开始一个事务的会话
-	sessionOpts := options.Session().SetDefaultReadPreference(readpref.Primary())
-	session, err := m.Client.StartSession(sessionOpts)
+	// 开始一个事务的会话（v2的SessionOptions已移除SetDefaultReadPreference）
+	session, err := m.Client.StartSession(options.Session())
 	if err != nil {
 		return fmt.Errorf("开启事务失败: %v", err)
 	}
@@ -290,6 +299,20 @@ func (m *Db) SetWhere(filter bson.D) *Db {
 	return m
 }
 
+// SetSanitizeHtml 对指定字段使用自定义方法进行html消噪处理
+func (m *Db) SetSanitizeHtml(fieldList []string, fn SanitizeHtmlFn) *Db {
+	if m.Err != nil {
+		return m
+	}
+	if len(fieldList) > 0 {
+		m.SanitizeHtmlField = fieldList
+	}
+	if fn != nil {
+		m.SanitizeHtmlFunc = fn
+	}
+	return m
+}
+
 // SetAgg 设置聚合管道
 func (m *Db) SetAgg(pipeline mongo.Pipeline) *Db {
 	if m.Err != nil {
@@ -313,6 +336,9 @@ func (m *Db) SetSort(sort bson.D) *Db {
 func (m *Db) SetLimit(limit int64) *Db {
 	if m.Err != nil {
 		return m
+	}
+	if limit > 10000 {
+		limit = 10000
 	}
 	m.Limit = limit
 	m.FindOptions.SetLimit(limit)
@@ -348,30 +374,33 @@ func (m *Db) SetInsertOrdered(ordered bool) *Db {
 	return m
 }
 
-// SetUpdateUpsert 设置更新的Upsert（不存在则插入，默认false）
+// SetUpdateUpsert 设置更新的Upsert（不存在则插入，默认false；同时作用于Update与UpdateOne）
 func (m *Db) SetUpdateUpsert(upsert bool) *Db {
 	if m.Err != nil {
 		return m
 	}
 	m.UpdateOptions.SetUpsert(upsert)
+	m.UpdateOneOptions.SetUpsert(upsert)
 	return m
 }
 
-// SetUpdateArrayFilters 设置更新的数组过滤条件（用于更新数组中的特定元素）
-func (m *Db) SetUpdateArrayFilters(filters options.ArrayFilters) *Db {
+// SetUpdateArrayFilters 设置更新的数组过滤条件（用于更新数组中的特定元素；v2起参数为[]interface{}；同时作用于Update与UpdateOne）
+func (m *Db) SetUpdateArrayFilters(filters []interface{}) *Db {
 	if m.Err != nil {
 		return m
 	}
 	m.UpdateOptions.SetArrayFilters(filters)
+	m.UpdateOneOptions.SetArrayFilters(filters)
 	return m
 }
 
-// SetDeleteHint 设置删除的索引提示（指定使用哪个索引查询，优化性能）
+// SetDeleteHint 设置删除的索引提示（指定使用哪个索引查询，优化性能；同时作用于Delete与DeleteOne）
 func (m *Db) SetDeleteHint(hint interface{}) *Db {
 	if m.Err != nil {
 		return m
 	}
 	m.DeleteOptions.SetHint(hint)
+	m.DeleteOneOptions.SetHint(hint)
 	return m
 }
 
@@ -382,7 +411,9 @@ func (m *Db) SetCollation(collation *options.Collation) *Db {
 	}
 	m.FindOptions.SetCollation(collation)
 	m.UpdateOptions.SetCollation(collation)
+	m.UpdateOneOptions.SetCollation(collation)
 	m.DeleteOptions.SetCollation(collation)
+	m.DeleteOneOptions.SetCollation(collation)
 	return m
 }
 
@@ -435,6 +466,19 @@ func (m *Db) FindAll(ctx context.Context) *Db {
 		m.Err = fmt.Errorf("游标遍历失败: %v", err)
 		return m
 	}
+	if len(m.SanitizeHtmlField) > 0 && m.SanitizeHtmlFunc != nil {
+		for i, row := range result {
+			for k, v := range row {
+				if function.InArray(k, m.SanitizeHtmlField) {
+					html, ok := v.(string)
+					if ok {
+						html = m.SanitizeHtmlFunc(html)
+					}
+					result[i][k] = html
+				}
+			}
+		}
+	}
 	m.Data = result
 	return m
 }
@@ -477,7 +521,6 @@ func (m *Db) Find(ctx context.Context) (string, error) {
 
 // Aggregate 执行聚合查询
 func (m *Db) Aggregate(ctx context.Context) *Db {
-	defer m.clearData(false)
 	if m.Err != nil {
 		return m
 	}
@@ -524,29 +567,29 @@ func (m *Db) Aggregate(ctx context.Context) *Db {
 }
 
 // Insert 插入单条文档
-func (m *Db) Insert(ctx context.Context, doc interface{}) (primitive.ObjectID, error) {
+func (m *Db) Insert(ctx context.Context, doc interface{}) (bson.ObjectID, error) {
 	defer m.clearData(false)
 	if m.Err != nil {
-		return primitive.NilObjectID, m.Err
+		return bson.NilObjectID, m.Err
 	}
 	if m.Collection == "" {
-		return primitive.NilObjectID, errors.New("未指定集合名")
+		return bson.NilObjectID, errors.New("未指定集合名")
 	}
 	if doc == nil {
-		return primitive.NilObjectID, errors.New("插入文档不能为空")
+		return bson.NilObjectID, errors.New("插入文档不能为空")
 	}
 	coll := m.Db.Collection(m.Collection)
 	txCtx := m.getTxContext(ctx)
 	res, err := coll.InsertOne(txCtx, doc)
 	if err != nil {
 		m.Err = fmt.Errorf("插入失败: %v", err)
-		return primitive.NilObjectID, m.Err
+		return bson.NilObjectID, m.Err
 	}
-	// 转换为ObjectID
-	oid, ok := res.InsertedID.(primitive.ObjectID)
+	// 转换为ObjectID（v2起ObjectID在bson包，不再有primitive子包）
+	oid, ok := res.InsertedID.(bson.ObjectID)
 	if !ok {
 		m.Err = errors.New("插入ID不是ObjectID类型")
-		return primitive.NilObjectID, m.Err
+		return bson.NilObjectID, m.Err
 	}
 	return oid, nil
 }
@@ -616,7 +659,7 @@ func (m *Db) UpdateOne(ctx context.Context, update interface{}) (int64, error) {
 	}
 	coll := m.Db.Collection(m.Collection)
 	txCtx := m.getTxContext(ctx)
-	res, err := coll.UpdateOne(txCtx, m.Filter, update, m.UpdateOptions)
+	res, err := coll.UpdateOne(txCtx, m.Filter, update, m.UpdateOneOptions)
 	if err != nil {
 		m.Err = fmt.Errorf("更新单条失败: %v", err)
 		return 0, m.Err
@@ -665,7 +708,7 @@ func (m *Db) DeleteOne(ctx context.Context) (int64, error) {
 	coll := m.Db.Collection(m.Collection)
 	txCtx := m.getTxContext(ctx)
 
-	res, err := coll.DeleteOne(txCtx, m.Filter, m.DeleteOptions)
+	res, err := coll.DeleteOne(txCtx, m.Filter, m.DeleteOneOptions)
 	if err != nil {
 		m.Err = fmt.Errorf("删除单条失败: %v", err)
 		return 0, m.Err
@@ -687,23 +730,29 @@ func (m *Db) ToString() (string, error) {
 
 // clearData 清理查询数据和临时配置
 func (m *Db) clearData(isClearTx bool) {
-	// 初始化操作选项
+	// 初始化操作选项（v2起Update/Delete的One与Many选项独立）
 	findOpts := options.Find()
-	deleteOpts := options.Delete()
-	updateOpts := options.Update()
+	deleteOpts := options.DeleteMany()
+	deleteOneOpts := options.DeleteOne()
+	updateOpts := options.UpdateMany()
+	updateOneOpts := options.UpdateOne()
 	insertOpts := options.InsertMany()
 	m.Collection = ""
 	m.Filter = nil
 	m.AggregatePipe = nil
 	m.FindOptions = findOpts
 	m.DeleteOptions = deleteOpts
+	m.DeleteOneOptions = deleteOneOpts
 	m.UpdateOptions = updateOpts
+	m.UpdateOneOptions = updateOneOpts
 	m.InsertOptions = insertOpts
 	m.Sort = nil
 	m.Limit = 0
 	m.Skip = 0
 	m.Projection = nil
 	m.Data = nil
+	m.SanitizeHtmlField = nil
+	m.SanitizeHtmlFunc = nil
 	m.Err = nil
 	if isClearTx {
 		m.TxSession = nil

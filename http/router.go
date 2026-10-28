@@ -59,12 +59,31 @@ func (r *Router) wrapHandler(handler HandlerFunc) http.HandlerFunc {
 func (r *Router) Handle(method, path string, handler HandlerFunc, localMiddlewares ...MiddlewareFunc) {
 	// 1. 构建完整中间件链
 	chainHandler := r.buildChain(handler, localMiddlewares)
-	// 2. 生成唯一路由键（method + path）
+	// 2. 生成唯一路由键（method + path），保留供外部查询路由映射
 	routeKey := method + " " + path
 	// 3. 存储路由映射
 	r.handlers.Store(routeKey, chainHandler)
 	// 4. 注册到系统ServeMux
-	r.mux.HandleFunc(path, r.wrapHandler(chainHandler))
+	//    传入具体HTTP方法时拼接为 "METHOD /path"，利用 Go 1.22+ ServeMux 的方法模式，
+	//    实现同 path 多方法路由（如 GET / 与 POST / 不再冲突）；
+	//    空方法或 "*" 视为匹配所有方法，仅按 path 注册（与旧行为一致）。
+	if isHTTPMethod(method) {
+		r.mux.HandleFunc(method+" "+path, r.wrapHandler(chainHandler))
+	} else {
+		r.mux.HandleFunc(path, r.wrapHandler(chainHandler))
+	}
+}
+
+// isHTTPMethod 判断是否为标准HTTP方法
+func isHTTPMethod(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete,
+		http.MethodPatch, http.MethodHead, http.MethodOptions, http.MethodConnect,
+		http.MethodTrace:
+		return true
+	default:
+		return false
+	}
 }
 
 // GET 快捷注册GET请求路由

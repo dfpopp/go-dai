@@ -1,1275 +1,1557 @@
-# go-Dai框架简介
+# go-Dai 框架
 
-go-Dai 是一款集多协议、多数据库引擎于一体的 Go 服务开发框架，特别沿用 PHP 主流框架设计思路，更适配 PHP 程序员的开发习惯，降低 Go 语言技术栈的学习与迁移成本；框架原生支持 HTTP、WebSocket、gRPC 多种服务协议，兼容 MySQL、MongoDB、Redis、ElasticSearch 等主流数据库引擎，且数据库操作支持简洁高效的链式调用；采用经典 MVC 架构设计，实现路由（Router）、控制器（Controller）、服务（Service）、模型（Model）全链路高一致性，为多协议服务开发提供统一、可靠的技术基座。
+go-Dai 是一款集多协议、多数据库引擎于一体的 Go 服务开发框架，沿用 PHP 主流框架（Laravel/ThinkPHP）的 MVC 分层思想与路由设计规范，专为 PHP 程序员转 Go 开发而设计，显著降低 Go 语言技术栈的学习与迁移成本。
 
-### 为什么选择go-Dai
+## 核心特性
 
-对于 PHP 程序员转 Go 开发，或需要快速落地多协议服务的团队，go-Dai 是更贴合需求的选择：它精准解决了跨语言迁移的思维切换痛点，同时打破了多协议开发需学习多种框架的壁垒，让开发者无需投入大量时间适配技术差异，就能用熟悉的模式高效开发高性能服务；更通过 MVC 全链路一致性设计，降低业务迭代与服务扩展的成本，助力快速落地业务、提升团队研发效率。
+- **PHP 友好，低迁移成本**：沿用 Laravel/ThinkPHP 等主流 PHP 框架的 MVC 分层思想、路由设计规范及控制器写法
+- **多协议统一**：一套编码规范即可开发 HTTP、WebSocket、gRPC 多种服务接口，通过 `netContext.Context` 统一抽象
+- **多数据库引擎**：兼容 MySQL、PostgreSQL、ClickHouse、MongoDB、Redis、ElasticSearch，支持简洁高效的链式调用
+- **开箱即用**：内置完善的默认配置、统一错误处理、CORS、Recovery、日志等基础能力
+- **服务切换成本低**：基于 MVC 全链路高一致性设计，模型与服务层完全脱离协议依赖
+- **优雅停机**：内置信号监听与资源清理机制，支持业务层自定义关闭回调
 
-### 核心优势
+## 适用场景
 
-- PHP友好，低迁移成本：沿用 Laravel/ThinkPHP 等主流 PHP 框架的 MVC 分层思想、路由设计规范及控制器写法，契合 PHP 程序员的开发习惯，无需大幅切换思维模式，轻松上手 Go 开发
+- PHP 程序员转 Go 开发
+- 需要快速落地多协议服务的团队
+- 需要统一开发规范的微服务架构
+- 需要高性能且保持开发效率的项目
+- 多站点、多租户的 SaaS 型业务系统
 
-- 多协议统一，开发范式一致：一套编码规范即可开发 HTTP、WebSocket、gRPC 多种服务接口，无需学习多种 Go 框架的差异化用法，降低多协议开发的学习与维护成本
+---
 
-- 数据库操作便捷，贴近PHP ORM体验：兼容 MySQL、MongoDB、Redis、ElasticSearch 等主流数据库引擎，支持简洁高效的链式调用，无需熟悉复杂的 Go 原生数据库操作语法，上手门槛低
+## 目录
 
-- 开箱即用，快速启动：内置完善的默认配置（服务端口、超时时间等）、统一错误处理、常用中间件（限流、认证等）基础能力，无需重复搭建基础架构，一键启动开发
+1. [环境要求与安装](#环境要求与安装)
+2. [项目目录结构](#项目目录结构)
+3. [核心架构](#核心架构)
+4. [快速上手](#快速上手)
+5. [核心模块详解](#核心模块详解)
+6. [多协议开发指南](#多协议开发指南)
+7. [数据库操作指南](#数据库操作指南)
+8. [落地应用案例](#落地应用案例)
+9. [常见问题](#常见问题)
+10. [文档资源](#文档资源)
 
-- 服务切换成本低，复用性强：基于 MVC 全链路高一致性设计，模型（Model）与服务（Service）层完全脱离协议依赖。当需要在 HTTP/WS/gRPC 服务间切换或新增服务协议时，仅需修改少量路由配置及控制器适配代码，核心业务逻辑（Model/Service）无需改动，大幅提升代码复用率与业务迭代效率
+---
 
-# 1. 环境要求与快速安装
+## 环境要求与安装
 
-- 环境要求：Go 1.24+（建议使用1.24及以上稳定版本，低版本兼容性未充分测试）、Protobuf（如需使用gRPC）、对应数据库客户端（MySQL/MongoDB等）
+### 环境要求
 
-- 安装命令：简洁的go get安装指令，示例：go get github.com/dfpopp/go-dai
+- Go 1.26+（建议使用最新稳定版本）
+- Protobuf（如需使用 gRPC）
+- 对应数据库客户端（MySQL/PostgreSQL/ClickHouse/MongoDB/Redis/ElasticSearch）
 
-# 2. 应用层目录结构
+### 安装框架
 
-```text
-
-├─ app/                应用根目录
-│  └─ api/             应用核心目录（支持多应用）
-│     ├─ controller/   控制器目录：处理请求分发
-│     ├─ service/      服务目录：封装业务逻辑
-│     ├─ model/        模型目录：映射数据实体
-│     ├─ router/       路由目录：配置接口路由
-│     ├─ middleware/   中间件目录：请求拦截与增强
-│     └─ init/         初始化目录（仅WS服务适用）
-├─ config/             配置文件根目录
-│  ├─ app.json         应用配置（必选，支持多应用拆分）
-│  ├─ database.json    数据库引擎配置（必选）
-│  └─ custom.json      自定义配置（文件名可自定义，需自行实现读取逻辑，框架支持配置钩子）
-├─ gen/                gRPC专用目录：存放*.pb.go、*_grpc.pb.go文件
-├─ proto/              gRPC专用目录：存放*.proto文件
-├─ pkg/                依赖包目录：存放第三方依赖或自定义包（含配置钩子函数）
-├─ runtime/            运行时目录：存放日志文件
-├─ scripts/            脚本目录：存放自定义脚本（可选）
-├─ api.go              入口文件（多应用场景可配置多个）
-└─ go.mod              项目依赖配置文件
+```bash
+go get github.com/dfpopp/go-dai
 ```
 
-# 3. 快速上手：三种协议服务示例
+### 依赖说明
 
-本节通过简单的「用户信息查询」场景，展示 HTTP、WebSocket、gRPC 三种服务的开发流程，体现框架统一的开发范式。
+框架核心依赖：
 
-## 3.0 核心分层逻辑说明
+- `github.com/go-sql-driver/mysql` - MySQL 驱动
+- `go.mongodb.org/mongo-driver/v2` - MongoDB 驱动
+- `github.com/go-redis/redis` - Redis 客户端
+- `github.com/elastic/go-elasticsearch` - ElasticSearch 客户端
+- `github.com/jackc/pgx/v5` - PostgreSQL 驱动（stdlib 模式）
+- `github.com/ClickHouse/clickhouse-go/v2` - ClickHouse 驱动（锁定 v2.42.0 适配 go 1.26）
+- `github.com/google/uuid` - UUID 生成
+- `github.com/gorilla/websocket` - WebSocket 支持
 
-框架采用严格的MVC分层设计，各层职责清晰，是多协议服务可复用、可维护的基础，适用于所有服务开发：
+---
 
-- **控制器（Controller）**：仅负责请求分发、参数校验、响应封装，不直接操作数据；所有业务逻辑通过调用服务层实现，不同协议（HTTP/WS/gRPC）仅需适配上下文和请求/响应格式，核心逻辑复用。
+## 项目目录结构
 
-- **服务（Service）**：封装核心业务逻辑，是多协议复用的核心；仅通过模型层操作数据，与具体协议完全解耦，支持在不同控制器中直接复用。
+### 框架目录结构
 
-- **模型（Model）**：映射数据实体，负责数据的CRUD操作；仅被服务层调用，不与控制器直接交互，确保数据操作的一致性。
+```
+go-Dai/
+├── base/                # 基础模块
+│   ├── component.go     # 组件基类（日志能力）
+│   ├── config.go        # 配置管理
+│   ├── connection.go    # 连接管理接口
+│   ├── controller.go    # 控制器基类
+│   ├── model.go         # 模型基类
+│   ├── router.go        # 路由接口
+│   └── service.go       # 服务基类
+├── bootstrap/           # 启动模块
+│   └── bootstrap.go     # 统一启动入口
+├── config/              # 配置模块
+│   ├── api.go           # API 配置
+│   ├── config.go        # 配置结构定义
+│   └── loader.go        # 配置加载器
+├── db/                  # 数据库模块
+│   ├── db.go            # 数据库统一入口
+│   ├── mysql/           # MySQL 支持
+│   ├── postgresql/      # PostgreSQL 支持
+│   ├── clickhouse/      # ClickHouse 支持
+│   ├── mongoDb/         # MongoDB 支持
+│   ├── redisDb/         # Redis 支持
+│   └── elasticSearch/   # ElasticSearch 支持
+├── function/            # 功能函数模块
+│   ├── function.go      # 常用工具函数
+│   └── regexpVar.go     # 正则表达式工具
+├── grpc/                # gRPC 模块
+│   ├── context.go       # gRPC 上下文
+│   ├── middleware.go    # gRPC 中间件
+│   ├── router.go        # gRPC 路由
+│   └── server.go        # gRPC 服务器
+├── http/                # HTTP 模块
+│   ├── context.go       # HTTP 上下文
+│   ├── middleware.go    # HTTP 中间件
+│   ├── router.go        # HTTP 路由
+│   ├── server.go        # HTTP 服务器
+│   └── sse.go           # SSE 支持
+├── logger/              # 日志模块
+│   └── logger.go        # 日志管理
+├── netContext/          # 网络上下文
+│   └── context.go       # 统一上下文接口
+├── websocket/           # WebSocket 模块
+│   ├── connEvent.go     # 连接事件
+│   ├── connManager.go   # 连接管理器
+│   ├── context.go       # WebSocket 上下文
+│   ├── middleware.go    # WebSocket 中间件
+│   ├── router.go        # WebSocket 路由
+│   └── server.go        # WebSocket 服务器
+├── go.mod
+└── go.sum
+```
 
-通过该分层设计，当需要新增或切换服务协议时，仅需开发/修改对应协议的控制器适配代码，服务层和模型层无需任何改动，实现“一次开发，多协议复用”。
+### 应用项目目录结构
 
-## 3.1 前置准备：创建数据模型与服务层
+```
+your-project/
+├── app/                 # 应用根目录
+│   └─ api/              # 应用核心目录（支持多应用：api/admin/seller/cron）
+│     ├─ controller/     # 控制器目录：处理请求分发
+│     │   └─ user/       # 按业务模块拆分
+│     │       └─ user.go
+│     ├─ service/        # 服务目录：封装业务逻辑
+│     │   └─ user/
+│     │       └─ user.go
+│     ├─ model/          # 模型目录：映射数据实体
+│     │   └─ user/
+│     │       └─ user.go
+│     ├─ router/         # 路由目录：配置接口路由
+│     │   └─ router.go
+│     ├─ middleware/     # 中间件目录：请求拦截与增强
+│     │   └─ http_middleware.go
+│     └─ init/           # 初始化目录（仅 WS 服务适用）
+│        └─ ws/          # WebSocket 连接事件监听器
+├── config/              # 配置文件根目录
+│   ├─ app.json          # 应用配置（必选，支持多应用拆分）
+│   ├─ database.json     # 数据库引擎配置（必选）
+│   └─ custom.json       # 自定义配置（可选）
+├── gen/                 # gRPC 专用目录：存放 *.pb.go、*_grpc.pb.go 文件
+├── proto/               # gRPC 专用目录：存放 *.proto 文件
+├── pkg/                 # 依赖包目录：存放第三方依赖或自定义包
+├── runtime/             # 运行时目录：存放日志文件
+│   └─ log/
+│     └─ api/            # 按应用名分目录
+├── scripts/             # 脚本目录（可选）
+├── api.go               # 入口文件（多应用场景可配置多个：api.go/cron.go/seller.go）
+└── go.mod               # 项目依赖配置文件
+```
 
-核心业务逻辑（Model/Service）与协议无关，一次开发多协议复用。框架严格遵循「控制器仅调用服务、服务调用模型」的分层规范：
+---
 
-关键设计原则：控制器不允许直接调用模型，仅能通过服务层间接操作数据。因此在HTTP/WS/gRPC服务间切换时，仅需修改控制器的上下文适配和请求/响应格式转换，服务层和模型层无需任何改动，大幅提升代码复用率。
+## 核心架构
 
-### 3.1.1 定义用户模型（Model）
+### MVC 分层设计
 
-文件路径：app/api/model/user.go
+框架采用严格的 MVC 分层设计，各层职责清晰，禁止跨层调用：
 
-```Plain Text
+```
+┌─────────────────────────────────────────┐
+│           Controller (控制器层)           │
+│  - 请求分发、参数校验、响应封装             │
+│  - 仅调用服务层，不直接操作数据             │
+│  - 继承 base.BaseController              │
+└─────────────────────────────────────────┘
+                    ↓
+┌─────────────────────────────────────────┐
+│            Service (服务层)               │
+│  - 封装核心业务逻辑                        │
+│  - 多协议复用的核心                        │
+│  - 仅通过模型层操作数据                    │
+│  - 继承 base.BaseService                 │
+└─────────────────────────────────────────┘
+                    ↓
+┌─────────────────────────────────────────┐
+│             Model (模型层)                │
+│  - 映射数据实体                           │
+│  - 负责 CRUD 操作                         │
+│  - 仅被服务层调用                          │
+│  - 继承 base.BaseModel                   │
+└─────────────────────────────────────────┘
+```
 
+**分层调用规则**：
 
-package model
+- `Controller → Service → Model → Database` 单向调用
+- Model 不能调用 Service
+- Service 不能调用 Controller
+- Controller 不能直接调用 Model（应通过 Service）
+
+### 多协议统一架构
+
+框架通过统一的上下文接口（`netContext.Context`）实现多协议统一：
+
+```
+┌─────────────────────────────────────────┐
+│         netContext.Context 接口          │
+│  - GetRequestInfo() RequestInfo          │
+│  - JSON/String/Query/PostForm            │
+│  - BindJSON/SetParam/GetParam            │
+│  - Set/Get 上下文存储                     │
+│  - RegisterCleanupFunc 清理回调           │
+└─────────────────────────────────────────┘
+          ↑           ↑           ↑
+          │           │           │
+    ┌─────┴───┐  ┌────┴────┐  ┌───┴─────┐
+    │ HTTP    │  │WebSocket│  │  gRPC   │
+    │ Context │  │ Context │  │ Context │
+    └─────────┘  └─────────┘  └─────────┘
+```
+
+`netContext.RequestInfo` 接口抽象了所有协议的公共请求属性：
+
+```go
+type RequestInfo interface {
+    GetMethod() string           // HTTP: GET/POST；WS: action；gRPC: 服务方法名
+    GetPath() string             // HTTP: /api/login；WS: action；gRPC: /pkg.Service/Method
+    GetClientIP() string         // 客户端IP（通用所有协议）
+    GetHeader(key string) string // HTTP: Header；WS: 握手Header；gRPC: Metadata
+    GetQuery(key string) string  // HTTP: URL.Query；WS: 握手Query；gRPC: Metadata
+}
+```
+
+### 核心模块组成
+
+1. **Bootstrap（启动模块）**：统一服务启动入口，支持多协议服务同时启动、优雅停机
+2. **Config（配置模块）**：支持 JSON 格式配置文件，支持配置热更新钩子
+3. **Base（基础模块）**：提供 BaseController、BaseService、BaseModel、BaseComponent 等基类
+4. **HTTP（HTTP 服务模块）**：HTTP 服务器、路由、中间件（CORS、Recovery）
+5. **WebSocket（WebSocket 服务模块）**：WebSocket 服务器、连接管理、事件监听
+6. **gRPC（gRPC 服务模块）**：gRPC 服务器、路由、拦截器
+7. **Database（数据库模块）**：MySQL、PostgreSQL、ClickHouse、MongoDB、Redis、ElasticSearch 支持，链式调用
+8. **Logger（日志模块）**：统一日志管理，支持多级别、按应用分目录
+9. **Function（功能函数模块）**：常用工具函数（Md5、Json_encode、Random、StrToTime 等）
+
+---
+
+## 快速上手
+
+### 创建第一个 HTTP 服务
+
+以用户查询接口为例，完整演示 MVC 三层开发流程。
+
+#### 1. 创建模型层
+
+文件路径：`app/api/model/user/user.go`
+
+```go
+package user
 
 import (
-	"github.com/dfpopp/go-dai/database"
+    "context"
+    "encoding/json"
+    "errors"
+    "time"
+    "github.com/dfpopp/go-dai/base"
 )
 
-// User 用户数据模型，映射MySQL users表
+// User 用户实体
 type User struct {
-	ID         uint64  `json:"id" db:"id,primaryKey"` // 主键ID
-	MerchantCode string `json:"merchant_code" db:"merchant_code"` // 商户编码（数据隔离）
-	Username   string  `json:"username" db:"username"` // 用户名
-	Age        int     `json:"age" db:"age"`           // 年龄
-	Email      string  `json:"email" db:"email"`       // 邮箱
-	CreateAt   int64   `json:"create_at" db:"create_at"` // 创建时间
+    Id       int    `json:"id,omitempty"`
+    Username string `json:"username,omitempty"`
+    Email    string `json:"email,omitempty"`
+    Age      int    `json:"age,omitempty"`
 }
 
-// TableName 指定模型对应的数据表名（框架规范：必须实现TableName方法）
-func (u *User) TableName() string {
-	return "users"
+type Model struct {
+    *base.BaseModel
+    DbTag string
+    Table string
+    Pk    string
 }
 
-// NewModel 创建用户模型实例（供服务层调用初始化）
-func NewModel() *User {
-	return &User{}
+func NewModel() *Model {
+    return &Model{
+        BaseModel: &base.BaseModel{},
+        DbTag:     "default",
+        Table:     "users",
+        Pk:        "id",
+    }
 }
 
-// GetOne 单条查询（框架链式调用风格，贴近PHP ORM体验）
-// fields：查询字段，where：查询条件（支持多条件拼接），args：条件参数
-func (u *User) GetOne(fields string, where ...interface{}) (*User, error) {
-	result := database.DB().Model(u).Fields(fields)
-	// 拼接多条件查询（支持商户编码、ID等多维度条件）
-	if len(where) > 0 {
-		result = result.Where(where[0].(string), where[1:]...)
-	}
-	result = result.First()
-	if result.Error != nil {
-		return nil, result.Error
-	}
-	return u, nil
-}
-
-// GetById 根据ID查询用户信息（兼容原有用法）
-func (u *User) GetById(id uint64) (*User, error) {
-	return u.GetOne(
-		"id,username,age,email,create_at",
-		"id = ?", id,
-	)
+// GetOne 根据条件查询单条用户
+func (m *Model) GetOne(field, whereTpl string, whereArgs []interface{}) (*User, error) {
+    m.Init()
+    db, err := m.GetMysqlDb(m.DbTag)
+    if err != nil {
+        return nil, err
+    }
+    db.SetTable(m.Table)
+    if field != "" {
+        db.SetField(field)
+    }
+    if whereTpl != "" {
+        db.SetWhere(whereTpl, whereArgs...)
+    }
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+    retStr, err := db.Find(ctx)
+    if err != nil {
+        m.LogError(err)
+        return nil, errors.New("数据查询失败")
+    }
+    if retStr == "" {
+        return nil, nil
+    }
+    userInfo := &User{}
+    err = json.Unmarshal([]byte(retStr), userInfo)
+    return userInfo, err
 }
 ```
 
-### 3.1.2 封装用户服务（Service）
+#### 2. 创建服务层
 
-文件路径：app/api/service/user.go
+文件路径：`app/api/service/user/user.go`
 
-```Plain Text
-
-
-package service
+```go
+package user
 
 import (
-	"fmt"
-	"merchantServer/app/api/model"
+    "errors"
+    "github.com/dfpopp/go-dai/base"
+    userModel "myproject/app/api/model/user"
 )
 
-// Service 用户业务服务（框架标准命名：统一使用Service作为结构体名）
 type Service struct {
-	// 注入用户模型实例（依赖注入，解耦服务与模型）
-	UserModel *model.User
+    *base.BaseService
+    userModel *userModel.Model
 }
 
-// NewService 初始化用户服务（框架标准命名：New+Service）
-// 供控制器调用，完成模型依赖注入
 func NewService() *Service {
-	return &Service{
-		// 初始化模型（模型层需提供NewModel方法）
-		UserModel: model.NewModel(),
-	}
+    return &Service{
+        BaseService: &base.BaseService{},
+        userModel:   userModel.NewModel(),
+    }
 }
 
-// GetUserById 调用模型层查询用户信息，封装业务逻辑
-// 入参/出参均为基础类型/结构体，无协议相关依赖，支持多协议复用
-func (s *Service) GetUserById(merchantCode string, id uint64) (*model.User, error) {
-	// 1. 业务参数校验（服务层核心职责：封装业务逻辑与参数校验）
-	if merchantCode == "" {
-		return nil, fmt.Errorf("商户编码不能为空")
-	}
-	if id <= 0 {
-		return nil, fmt.Errorf("用户ID非法")
-	}
-	// 2. 调用模型层查询数据（服务层仅通过模型操作数据，不直接操作数据库）
-	// 多条件查询（商户编码+用户ID），确保数据隔离
-	return s.UserModel.GetOne(
-		"id,username,age,email,create_at", // 指定查询字段，避免冗余
-		"merchant_code = ?", // 数据隔离条件
-		"id=?", id,
-	)
+// GetUserById 根据用户ID查询用户信息
+func (s *Service) GetUserById(userId int) (*userModel.User, error) {
+    s.Init()
+    if userId <= 0 {
+        return nil, errors.New("用户ID非法")
+    }
+    field := "id,username,email,age"
+    userInfo, err := s.userModel.GetOne(field, "id=?", []interface{}{userId})
+    if err != nil {
+        s.LogError(err)
+        return nil, errors.New("用户查询失败")
+    }
+    if userInfo == nil {
+        return nil, errors.New("用户不存在")
+    }
+    return userInfo, nil
 }
 ```
 
-关键设计原则：服务层代码仅依赖模型层，不依赖任何协议相关的上下文（如netContext、context.Context）或工具类。因此无论控制器是HTTP、WS还是gRPC类型，都能直接调用服务方法，实现「一次开发，多协议复用」。
+#### 3. 创建控制器
 
-文件路径：app/api/service/user.go
+文件路径：`app/api/controller/user/user.go`
 
-```Plain Text
-
-package service
+```go
+package user
 
 import (
-	"fmt"
-	"merchantServer/app/api/model"
+    "strconv"
+    "github.com/dfpopp/go-dai/base"
+    "github.com/dfpopp/go-dai/netContext"
+    userService "myproject/app/api/service/user"
 )
 
-// UserService 用户业务服务
-type UserService struct {
-	userModel *model.User
+type Controller struct {
+    *base.BaseController
+    userService *userService.Service
 }
 
-// NewUserService 初始化用户服务
-func NewUserService() *UserService {
-	return &UserService{
-		userModel: &model.User{},
-	}
+func NewController() *Controller {
+    return &Controller{
+        BaseController: &base.BaseController{},
+        userService:    userService.NewService(),
+    }
 }
 
-// GetUserById 调用模型层查询用户信息，封装业务逻辑
-func (s *UserService) GetUserById(id uint64) (*model.User, error) {
-	// 可在此处添加业务校验、数据转换等逻辑
-	if id <= 0 {
-		return nil, fmt.Errorf("用户ID非法")
-	}
-	return s.userModel.GetById(id)
+// GetUser 获取用户信息
+func (c *Controller) GetUser(ctx netContext.Context) {
+    c.Init(ctx)
+    // 1. 参数获取
+    idStr := c.GetPostForm("id")
+    if idStr == "" {
+        c.Error(400, "用户ID不能为空")
+        return
+    }
+    id, err := strconv.Atoi(idStr)
+    if err != nil {
+        c.Error(400, "用户ID格式错误")
+        return
+    }
+    // 2. 调用服务层
+    userInfo, err := c.userService.GetUserById(id)
+    if err != nil {
+        c.Error(400, err.Error())
+        return
+    }
+    // 3. 响应封装
+    c.Success(userInfo)
 }
 ```
 
-## 3.2 HTTP服务开发
+#### 4. 创建路由
 
-### 3.2.1 编写HTTP控制器
+文件路径：`app/api/router/router.go`
 
-文件路径：app/api/controller/user_controller.go
-
-```Plain Text
-
-
-package controller
-
-import (
-	"github.com/dfpopp/go-dai/base"
-	"github.com/dfpopp/go-dai/netContext"
-	"merchantServer/app/api/service/user"
-	"strconv"
-	"strings"
-)
-
-// UserController HTTP用户控制器（遵循：控制器仅调用服务，不直接操作模型）
-type UserController struct {
-	*base.BaseController // 继承框架基础控制器，获得请求处理、响应封装基础能力
-	Service *user.Service // 注入用户服务，仅通过服务层调用业务逻辑
-}
-
-// NewUserController 创建控制器实例（初始化服务依赖）
-func NewUserController() *UserController {
-	return &UserController{
-		BaseController: &base.BaseController{},
-		Service:        user.NewUserService(), // 初始化服务层，解除与模型的直接依赖
-	}
-}
-
-// GetUser 处理用户查询HTTP请求
-// @Summary 查询用户信息
-// @Description 根据用户ID查询用户详情
-// @Param id path uint64 true "用户ID"
-// @Success 200 {object} model.User "成功返回用户信息"
-// @Failure 400 {string} string "参数错误"
-// @Failure 500 {string} string "服务器内部错误"
-// @Router /user/{id} [get]
-func (c *UserController) GetUser(ctx netContext.Context) {
-	// 1. 获取路径参数（框架不支持Param方法，通过GetRequestInfo().GetPath()解析）
-	path := ctx.GetRequestInfo().GetPath()
-	// 解析路径中的id（示例：从路径/user/123中提取123）
-	userIdStr := strings.TrimPrefix(path, "/user/")
-	if userIdStr == path { // 未提取到id
-		c.BaseController.Error(400, "用户ID不能为空")
-		return
-	}
-	// 转换为uint64类型
-	userId, err := strconv.ParseUint(userIdStr, 10, 64)
-	if err != nil {
-		c.BaseController.Error(400, "用户ID格式错误")
-		return
-	}
-
-	// 2. 调用服务层逻辑（控制器仅与服务交互，不直接操作模型）
-	userInfo, err := c.Service.GetUserById(userId)
-	if err != nil {
-		c.BaseController.Error(500, err.Error())
-		return
-	}
-	if userInfo == nil {
-		c.BaseController.Error(500, "用户不存在")
-		return
-	}
-
-	// 3. 统一响应格式
-	c.BaseController.Success(userInfo)
-}
-```
-
-### 3.2.2 配置HTTP路由（实现BaseRouter接口）
-
-文件路径：app/api/router/http_router.go（实现框架BaseRouter接口，统一管理HTTP路由）
-
-```Plain Text
-
+```go
 package router
 
 import (
-	"github.com/dfpopp/go-dai/http"
-	"merchantServer/app/api/controller"
-	"merchantServer/app/api/middleware"
+    "github.com/dfpopp/go-dai/base"
+    "github.com/dfpopp/go-dai/http"
+    "myproject/app/api/controller/user"
+    "myproject/app/api/middleware"
 )
 
-// ApiRouter API路由（实现框架BaseRouter接口）
 type ApiRouter struct {
-	userController *controller.UserController // 仅保留UserController，贴合示例场景
+    *base.DefaultBaseRouter
+    userController *user.Controller
 }
 
-// NewApiRouter 创建API路由实例（供入口文件调用初始化）
 func NewApiRouter() *ApiRouter {
-	return &ApiRouter{
-		userController: controller.NewUserController(), // 初始化UserController
-	}
+    return &ApiRouter{
+        DefaultBaseRouter: &base.DefaultBaseRouter{},
+        userController:    user.NewController(),
+    }
 }
 
-// RegisterHTTPRoutes 注册HTTP路由（框架约定方法名，用于绑定HTTP服务路由）
 func (r *ApiRouter) RegisterHTTPRoutes(server *http.Server) {
-	// 1. 公开路由（无需认证，仅添加限流中间件）
-	// 限流中间件：middleware.RateLimit(200) 限制每秒200次请求
-	server.GET("/user/:id", http.ToHTTPHandler(r.userController.GetUser), middleware.RateLimit(200))
-
-	// 2. 路由分组：需认证路由（统一添加认证中间件+自定义中间件）
-	// 定义认证分组函数，自动拼接认证中间件与自定义中间件
-	authGroup := func(path string, handler http.HandlerFunc, middlewares ...http.MiddlewareFunc) {
-		allMiddlewares := append([]http.MiddlewareFunc{middleware.Auth()}, middlewares...)
-		server.POST(path, handler, allMiddlewares...)
-	}
-	// 注册认证路由（自动携带middleware.Auth()认证中间件）
-	authGroup("/user/edit", http.ToHTTPHandler(r.userController.EditInfo), middleware.RateLimit(100)) // 认证+限流（100次/秒）
+    server.POST("/user/info", http.ToHTTPHandler(r.userController.GetUser), middleware.Auth())
 }
 ```
 
-### 3.2.3 编写HTTP服务入口
+#### 5. 创建中间件（可选）
 
-文件路径：api.go
+文件路径：`app/api/middleware/http_middleware.go`
 
-```Plain Text
+```go
+package middleware
 
+import (
+    "sort"
+    "strings"
+    "github.com/dfpopp/go-dai/config"
+    "github.com/dfpopp/go-dai/function"
+    "github.com/dfpopp/go-dai/http"
+)
+
+// Auth 签名认证中间件
+func Auth() http.MiddlewareFunc {
+    return func(next http.HandlerFunc) http.HandlerFunc {
+        return func(c *http.Context) {
+            reqInfo := c.GetRequestInfo()
+            sign := reqInfo.GetHeader("sign")
+            t := reqInfo.GetHeader("t")
+            appId := reqInfo.GetHeader("appId")
+            if appId == "" {
+                c.JSON(200, map[string]interface{}{"code": 401, "msg": "请使用正确的appId"})
+                return
+            }
+            // 从自定义配置获取 apiKey
+            customConfig := config.GetCustomConfig().GetConfig()
+            apiKey := customConfig.Get("outSite").Get(appId).String()
+            if apiKey == "" {
+                c.JSON(200, map[string]interface{}{"code": 401, "msg": "请使用正确的appId"})
+                return
+            }
+            // 按参数名排序后拼接签名
+            params := c.PostFormAll()
+            keys := make([]string, 0)
+            for key, value := range params {
+                if value != "" {
+                    keys = append(keys, key)
+                }
+            }
+            sort.Strings(keys)
+            signStr := apiKey
+            for _, key := range keys {
+                signStr += key + params[key]
+            }
+            signStr += apiKey + "t=" + t
+            if sign == strings.ToUpper(function.Md5(signStr)) {
+                next(c)
+            } else {
+                c.JSON(200, map[string]interface{}{"code": 401, "msg": "签名验证失败"})
+            }
+        }
+    }
+}
+```
+
+#### 6. 创建入口文件
+
+文件路径：`api.go`
+
+```go
 package main
 
 import (
-	"github.com/dfpopp/go-dai/bootstrap"
-	"github.com/dfpopp/go-dai/config"
-	"merchantServer/app/api/router"
-	pkgConfig "merchantServer/pkg/config"
+    "github.com/dfpopp/go-dai/bootstrap"
+    "github.com/dfpopp/go-dai/config"
+    "myproject/app/api/router"
 )
 
-func init() {
-	// 注册自定义配置文件加载钩子（自定义配置读取逻辑）
-	config.RegisterPostLoadHook(pkgConfig.CustomConfigLoadHook)
-}
 func main() {
-	// 1. 加载配置
-	appName := "api"
-	if err := config.LoadAppConfig("config/app.json", appName); err != nil {
-		panic("加载应用配置失败：" + err.Error())
-	}
-	if err := config.LoadDatabaseConfig("config/database.json"); err != nil {
-		panic("加载数据库配置失败：" + err.Error())
-	}
-
-	// 2. 初始化路由实例（统一管理HTTP路由）
-	apiRouter := router.NewApiRouter()
-
-	// 3. 构建启动配置（启用HTTP服务）
-	bootCfg := &bootstrap.BootConfig{
-		AppName:            "api",
-		AppConfigPath:      "config/app.json",
-		DatabaseConfigPath: "config/database.json",
-		EnableServices:     []bootstrap.ServiceType{bootstrap.ServiceTypeHTTP}, // 启用HTTP服务
-		Router:             apiRouter, // 绑定路由实例，框架自动调用RegisterHTTPRoutes方法
-	}
-	// 4. 一键启动服务
-	_, err := bootstrap.Boot(bootCfg)
-	if err != nil {
-		panic("应用启动失败: " + err.Error())
-	}
+    appName := "api"
+    // 1. 加载配置
+    if err := config.LoadAppConfig("config/app.json", appName); err != nil {
+        panic("加载应用配置失败：" + err.Error())
+    }
+    if err := config.LoadDatabaseConfig("config/database.json"); err != nil {
+        panic("加载数据库配置失败：" + err.Error())
+    }
+    // 2. 构建启动配置
+    bootCfg := &bootstrap.BootConfig{
+        AppName:            appName,
+        AppConfigPath:      "config/app.json",
+        DatabaseConfigPath: "config/database.json",
+        CustomConfigPath:   "config/custom.json",
+        EnableServices:     []bootstrap.ServiceType{bootstrap.ServiceTypeHTTP},
+        Router:             router.NewApiRouter(),
+    }
+    // 3. 一键启动服务
+    _, err := bootstrap.Boot(bootCfg)
+    if err != nil {
+        panic("应用启动失败: " + err.Error())
+    }
 }
 ```
 
-## 3.3 WebSocket服务开发
+#### 7. 配置文件示例
 
-### 3.3.1 编写WS控制器
+`config/app.json`：
 
-文件路径：app/api/controller/ws_user_controller.go
+```json
+{
+  "api": {
+    "name": "api-service",
+    "env": "prod",
+    "http": {
+      "addr": ":8080",
+      "read_timeout": 30,
+      "write_timeout": 30,
+      "max_header_bytes": 1048576,
+      "ssl": false,
+      "ssl_cert_file": "",
+      "ssl_key_file": ""
+    },
+    "logger": {
+      "path": "runtime/log/"
+    }
+  }
+}
+```
 
-```Plain Text
+`config/database.json`：
 
-package controller
+```json
+{
+  "mysql": {
+    "default": {
+      "host": "127.0.0.1",
+      "port": "3306",
+      "user": "root",
+      "pwd": "123456",
+      "dbname": "myproject",
+      "pre": "wk_",
+      "charset": "utf8",
+      "max_open_conn_num": 100,
+      "max_idle_conn_num": 20,
+      "conn_max_lifetime": 3600
+    }
+  },
+  "redis": {
+    "default": {
+      "host": "127.0.0.1",
+      "port": "6379",
+      "pwd": "",
+      "pre": "myproject_",
+      "pool_size": 64,
+      "min_idle_conns": 10,
+      "idle_timeout": 300,
+      "timeout": 5
+    }
+  }
+}
+```
 
-import (
-	"github.com/dfpopp/go-dai/base"
-	"github.com/dfpopp/go-dai/netContext"
-	"merchantServer/app/api/service/user"
+---
+
+## 核心模块详解
+
+### Bootstrap 启动模块
+
+统一服务启动入口，支持多协议服务同时启动、优雅停机、业务层清理回调。
+
+```go
+type BootConfig struct {
+    AppName            string          // 应用名（如 api/admin/cron）
+    AppConfigPath      string          // 应用配置文件路径
+    DatabaseConfigPath string          // 数据库配置文件路径
+    CustomConfigPath   string          // 自定义配置文件路径（可选）
+    EnableServices     []ServiceType   // 需要启动的服务类型
+    Router             base.BaseRouter // 应用路由实例
+    ShutdownFunc       func()          // 服务关闭回调函数（可选）
+}
+
+// 服务类型枚举
+const (
+    ServiceTypeHTTP ServiceType = "http"
+    ServiceTypeWS   ServiceType = "ws"
+    ServiceTypeGRPC ServiceType = "grpc"
 )
+```
 
-// WsUserController WebSocket用户控制器（与HTTP控制器逻辑一致，无需修改业务代码）
-type WsUserController struct {
-	*base.BaseController // 继承WS基础控制器，获得WS消息处理能力
-	Service *user.Service // 复用用户服务，服务层逻辑完全复用
-}
+**启动流程**：
 
-// NewWsUserController 创建WS控制器实例（初始化服务依赖）
-func NewWsUserController() *WsUserController {
-	return &WsUserController{
-		BaseController: &base.BaseController{},
-		Service:        user.NewUserService(), // 复用同一服务层，无需重复开发
-	}
-}
+1. 校验启动配置完整性
+2. 加载应用配置、数据库配置、自定义配置
+3. 初始化日志（按应用名分目录）
+4. 初始化数据库连接（按配置自动识别 MySQL/PostgreSQL/ClickHouse/MongoDB/Redis/ES）
+5. 按服务类型初始化并启动服务（HTTP/WS/gRPC）
+6. 注册信号监听，支持优雅停机
 
-// GetUser 处理WS用户查询请求（业务逻辑与HTTP控制器一致，仅上下文类型适配）
-// 约定：客户端发送JSON格式数据 {"id": "1"}
-func (c *WsUserController) GetUser(ctx netContext.Context) {
-	// 1. 解析客户端消息（仅上下文适配WS场景，业务逻辑无改动）
-	type Req struct {
-		ID string `json:"id"`
-	}
-	var req Req
-	if err := ctx.BindJson(&req); err != nil {
-		c.BaseController.Error(400, "消息格式错误："+err.Error())
-		return
-	}
-	if req.ID == "" {
-		c.BaseController.Error(400, "用户ID不能为空")
-		return
-	}
+**多协议混合启动**：
 
-	// 2. 调用服务层逻辑（完全复用HTTP控制器的服务调用逻辑，无任何修改）
-	userInfo, err := c.Service.GetUserById(req.ID)
-	if err != nil {
-		c.BaseController.Error(500, err.Error())
-		return
-	}
-	if userInfo == nil {
-		c.BaseController.Error(500, "用户不存在")
-		return
-	}
-
-	// 3. 统一响应格式
-	c.BaseController.Success(userInfo)
+```go
+bootCfg := &bootstrap.BootConfig{
+    AppName:        appName,
+    EnableServices: []bootstrap.ServiceType{
+        bootstrap.ServiceTypeHTTP,
+        bootstrap.ServiceTypeWS,
+        bootstrap.ServiceTypeGRPC,
+    },
+    Router: router.NewApiRouter(),
 }
 ```
 
-### 3.3.2 配置WS路由（实现BaseRouter接口）
+### BaseController 控制器基类
 
-文件路径：app/api/router/ws_router.go（实现框架BaseRouter接口，统一管理WS路由）
+提供统一的请求处理、响应封装、WebSocket 消息推送能力。
 
-```Plain Text
+**核心方法**：
 
-package router
+| 方法 | 说明 |
+|-----|------|
+| `Init(ctx netContext.Context)` | 初始化控制器（必须方法首行调用） |
+| `Success(data interface{}, msg ...string)` | 统一成功响应 |
+| `DataSuccess(data interface{}, count int64)` | 统一成功响应（带分页总数） |
+| `Error(code int, msg string)` | 统一失败响应 |
+| `RespText(msg string)` | 文本响应 |
+| `GetCtx() (netContext.Context, error)` | 获取当前上下文 |
+| `GetConnID()` | 获取当前连接ID（WebSocket） |
+| `BindUserID(userID string)` | 绑定用户ID到连接（WebSocket） |
+| `UnbindUserID(userID string)` | 解绑用户ID（WebSocket） |
+| `GetUserConnIDs(userID string)` | 获取用户所有在线连接 |
+| `SendToConnID(connID, action, data)` | 给指定连接发送消息 |
+| `SendToConnIDs(connIDs, action, data)` | 批量给多个连接发送消息 |
+| `SendToUser(userID, action, data)` | 给指定用户所有连接发送消息 |
+| `SendToUsers(userIDs, action, data)` | 批量给多个用户发送消息 |
+| `LogInfo/LogError/LogWarn` | 日志记录 |
 
-import (
-	"github.com/dfpopp/go-dai/websocket"
-	"merchantServer/app/api/controller"
-	"merchantServer/app/api/middleware"
+**统一响应格式**：
+
+```go
+// 成功响应
+{
+    "code": 200,
+    "msg": "操作成功",
+    "data": {...}
+}
+
+// 失败响应
+{
+    "code": 400,
+    "msg": "参数错误",
+    "data": null
+}
+
+// 分页响应
+{
+    "code": 200,
+    "msg": "操作成功",
+    "data": [...],
+    "count": 100
+}
+```
+
+### BaseService 服务基类
+
+提供基础组件能力（日志、初始化）。
+
+```go
+type BaseService struct {
+    BaseComponent
+}
+
+func (s *BaseService) Init() {
+    s.BaseComponent.Init()
+}
+```
+
+### BaseModel 模型基类
+
+提供统一的数据库操作能力。
+
+**核心方法**：
+
+| 方法 | 说明 |
+|-----|------|
+| `GetMysqlDb(tag string)` | 获取 MySQL 数据库实例 |
+| `GetPostgresDb(tag string)` | 获取 PostgreSQL 数据库实例 |
+| `GetClickhouseDb(tag string)` | 获取 ClickHouse 数据库实例 |
+| `GetMongoDb(tag string)` | 获取 MongoDB 数据库实例 |
+| `GetRedis(tag string)` | 获取 Redis 数据库实例 |
+| `GetESDb(tag string)` | 获取 ElasticSearch 数据库实例 |
+| `StrIdToObjectID(id string)` | 字符串转 MongoDB ObjectID |
+| `ObjectIDToString(id)` | MongoDB ObjectID 转字符串 |
+| `MapToBsonD(data)` | map 转 bson.D |
+| `StringToFulltextIndexStr(input)` | 生成全文索引字符串 |
+| `StringToSearchFulltextStr(input)` | 生成搜索用全文索引字符串 |
+| `LogInfo/LogError/LogWarn` | 日志记录 |
+
+### 配置管理
+
+框架支持三类配置文件：
+
+1. **应用配置（app.json）**：应用名、环境、HTTP/WS/gRPC 服务配置、日志配置
+2. **数据库配置（database.json）**：MySQL、PostgreSQL、ClickHouse、MongoDB、Redis、ElasticSearch 连接配置
+3. **自定义配置（custom.json）**：业务自定义配置（如签名密钥、第三方接口配置）
+
+**配置热更新**：框架内置配置变更钩子，数据库配置变更时会自动重新初始化连接池（平滑切换，延迟 30 秒关闭旧连接）。
+
+```go
+// 注册配置变更钩子
+config.RegisterConfigChangeHook(func(configType string, cfg interface{}) error {
+    if configType == "database" {
+        // 处理数据库配置变更
+    }
+    return nil
+})
+```
+
+**读取自定义配置**：
+
+```go
+customConfig := config.GetCustomConfig().GetConfig()
+rc4Pwd := customConfig.Get("rc4_pwd").String()
+mgDbName := customConfig.Get("inSite").Get(site).Get("mgDb").String()
+```
+
+### 中间件机制
+
+框架内置中间件：
+
+- `http.Recovery()` - 异常恢复，捕获 panic 返回 500
+- `http.CORS()` - 跨域处理，允许所有域
+
+**自定义中间件签名**：
+
+```go
+type MiddlewareFunc func(next HandlerFunc) HandlerFunc
+```
+
+**中间件使用示例**：
+
+```go
+// 单中间件
+server.POST("/user/info", http.ToHTTPHandler(handler), middleware.Auth())
+
+// 多中间件（按顺序执行）
+server.POST("/biddingInfo/list", http.ToHTTPHandler(handler),
+    middleware.Auth(),
+    middleware.RateLimit(),
+    middleware.Logger(),
 )
-
-// ApiRouter API路由（实现框架BaseRouter接口，复用结构体，统一管理多协议路由）
-type ApiRouter struct {
-	wsUserController *controller.WsUserController // 仅保留WS用户控制器
-}
-
-// NewApiRouter 创建API路由实例（供入口文件调用初始化）
-func NewApiRouter() *ApiRouter {
-	return &ApiRouter{
-		wsUserController: controller.NewWsUserController(), // 初始化WS用户控制器
-	}
-}
-
-// RegisterWSRoutes 注册WebSocket路由（框架约定方法名，用于绑定WS服务路由）
-func (r *ApiRouter) RegisterWSRoutes(wsServer *websocket.Server) {
-	// 注册WS路由，使用websocket.ToWSHandler转换控制器方法，添加WS专属限流中间件
-	wsServer.Register("user.get", websocket.ToWSHandler(r.wsUserController.GetUser), middleware.WsRateLimit(200))
-	// 可添加更多WS路由...
-}
 ```
 
-### 3.3.3 配置WS监听器（监听用户上下线）
+### WebSocket 连接管理
 
-文件路径：app/api/init/ws/ws.go（WS服务专用，需在服务启动前注册）
+框架提供全局连接管理器，支持连接创建、移除、属性管理、消息推送、事件监听。
 
-以下是完整的监听器实现代码，用于监听用户WS连接的上下线事件并执行自定义业务逻辑：
+**事件类型**：
 
-文件路径：app/api/init/ws/ws.go（WS服务专用，需在服务启动前注册）
+- `EventConnOnline` - 用户上线事件
+- `EventConnOffline` - 用户下线事件
 
-以下是完整的监听器实现代码，用于监听用户WS连接的上下线事件并执行自定义业务逻辑：
+**实现连接事件处理器**：
 
-```Plain Text
-
+```go
 package ws
 
 import (
-	"encoding/json"
-	"github.com/dfpopp/go-dai/logger"
-	"github.com/dfpopp/go-dai/websocket"
-	"github.com/google/uuid"
+    "github.com/dfpopp/go-dai/websocket"
+    "github.com/dfpopp/go-dai/logger"
 )
 
-// CustomConnListener 应用层自定义监听器（实现ConnEventListener接口）
-type CustomConnListener struct {
-	// 可注入应用层业务服务（如好友服务、消息服务）
-	// friendService *service.FriendService
-}
+type CustomConnListener struct{}
 
-// NewCustomConnListener 创建监听器实例
 func NewCustomConnListener() *CustomConnListener {
-	return &CustomConnListener{
-		// 可在此处初始化注入的服务
-		// friendService: service.NewFriendService(),
-	}
+    return &CustomConnListener{}
 }
 
-// OnConnEvent 上下线事件回调（应用层核心业务逻辑）
-func (l *CustomConnListener) OnConnEvent(event websocket.ConnEvent) {
-	// 1. 获取连接ID（从事件中直接获取）
-	connID := event.ConnInfo.ConnID
-	logger.Info("收到连接事件", "eventType", event.EventType, "connID", connID, "triggerTime", event.TriggerTime)
-
-	// 2. 根据事件类型执行自定义逻辑
-	switch event.EventType {
-	case websocket.EventConnOnline:
-		l.handleOnline(event) // 处理上线逻辑
-	case websocket.EventConnOffline:
-		l.handleOffline(event) // 处理下线逻辑
-	}
+func (l *CustomConnListener) OnConnect(connInfo *websocket.ConnInfo) {
+    logger.Info("用户上线", "connID", connInfo.ConnID, "clientIP", connInfo.ClientIP)
 }
 
-// handleOnline 处理用户上线逻辑（应用层自定义）
-func (l *CustomConnListener) handleOnline(event websocket.ConnEvent) {
-	connID := event.ConnInfo.ConnID
-	clientIP := event.ConnInfo.ClientIP
-
-	// 示例1：打印上线日志
-	logger.Info("用户上线", "connID", connID, "clientIP", clientIP, "onlineTime", event.TriggerTime)
-
-	// 示例2：获取连接绑定的用户ID（若应用层已设置）
-	//userIDVal, exists := websocket.GetGlobalConnManager().GetConnAttr(connID, "user_id")
-	//if exists {
-	//	userID, _ := userIDVal.(string)
-	//	logger.Info("用户绑定成功", "userID", userID, "connID", connID)
-	//
-	//	// 示例3：通知该用户的好友（应用层需自行实现好友关系查询）
-	//	friends := l.friendService.GetFriendList(userID)
-	//	// 组装上线通知
-	//	notifyMsg := map[string]interface{}{
-	//		"action":     "friend.online",
-	//		"request_id": uuid.NewString(),
-	//		"data": map[string]interface{}{
-	//			"user_id":   userID,
-	//			"conn_id":   connID,
-	//			"online_at": event.TriggerTime.Format("2006-01-02 15:04:05"),
-	//		},
-	//	}
-	//	msgBytes, _ := json.Marshal(notifyMsg)
-	//	// 给好友群发通知（需传入好友的ConnID列表）
-	//	websocket.GetGlobalConnManager().Multicast(friends, string(msgBytes))
-	//}
-}
-
-// handleOffline 处理用户下线逻辑（应用层自定义）
-func (l *CustomConnListener) handleOffline(event websocket.ConnEvent) {
-	connID := event.ConnInfo.ConnID
-	clientIP := event.ConnInfo.ClientIP
-	closeReason := event.CloseReason
-	// 示例1：打印下线日志
-	logger.Info("用户下线", "connID", connID, "clientIP", clientIP, "offlineTime", event.TriggerTime, "reason", closeReason)
-
-	// 示例2：获取连接绑定的用户ID
-	//userIDVal, exists := websocket.GetGlobalConnManager().GetConnAttr(connID, "user_id")
-	//if exists {
-	//	userID, _ := userIDVal.(string)
-	//	logger.Info("用户下线", "userID", userID, "connID", connID)
-	//
-	//	// 示例3：通知该用户的好友
-	//	notifyMsg := map[string]interface{}{
-	//		"action":     "friend.offline",
-	//		"request_id": uuid.NewString(),
-	//		"data": map[string]interface{}{
-	//			"user_id":    userID,
-	//			"conn_id":    connID,
-	//			"offline_at": event.TriggerTime.Format("2006-01-02 15:04:05"),
-	//			"reason":     closeReason,
-	//		},
-	//	}
-	//	msgBytes, _ := json.Marshal(notifyMsg)
-	//	// 给好友群发通知（需传入好友的ConnID列表）
-	//	websocket.GetGlobalConnManager().Multicast([]string{}, string(msgBytes))
-	//}
-
-	// 示例4：主动关闭连接（应用层可手动调用，此处仅演示）
-	// websocket.GetGlobalConnManager().CloseConnByConnID(connID, "manual close")
+func (l *CustomConnListener) OnDisconnect(connInfo *websocket.ConnInfo, reason string) {
+    logger.Info("用户下线", "connID", connInfo.ConnID, "reason", reason)
 }
 ```
 
-### 3.3.4 启动WS服务
+**在入口文件中注册**：
 
-修改api.go，添加WS服务启动逻辑（**关键：监听器必须在服务启动前注册**）：
-
-```Plain Text
-
-package main
-
-import (
-	"github.com/dfpopp/go-dai/bootstrap"
-	"github.com/dfpopp/go-dai/config"
-	"github.com/dfpopp/go-dai/websocket"
-	"merchantServer/app/api/router"
-	"merchantServer/app/api/init/ws" // 引入WS监听器包
-	pkgConfig "merchantServer/pkg/config"
-)
-
+```go
 func init() {
-	config.RegisterPostLoadHook(pkgConfig.CustomConfigLoadHook)
-}
-func main() {
-	// 1. 加载配置
-	appName := "api"
-	if err := config.LoadAppConfig("config/app.json", appName); err != nil {
-		panic("加载应用配置失败：" + err.Error())
-	}
-	if err := config.LoadDatabaseConfig("config/database.json"); err != nil {
-		panic("加载数据库配置失败：" + err.Error())
-	}
-
-	// 关键：启动WS服务前，注册用户上下线监听器
-	// 1. 创建自定义监听器实例
-	customListener := ws.NewCustomConnListener()
-	// 2. 注册监听器到框架事件总线
-	connManager := websocket.GetGlobalConnManager()
-	connManager.GetEventBus().Subscribe("custom_conn_listener", customListener)
-
-	// 2. 初始化路由实例（统一管理WS路由）
-	apiRouter := router.NewApiRouter()
-
-	// 3. 构建启动配置（启用WS服务）
-	bootCfg := &bootstrap.BootConfig{
-		AppName:            "api",
-		AppConfigPath:      "config/app.json",
-		DatabaseConfigPath: "config/database.json",
-		EnableServices:     []bootstrap.ServiceType{bootstrap.ServiceTypeWS}, // 启用WS服务
-		Router:             apiRouter, // 绑定路由实例，框架自动调用RegisterWSRoutes方法
-	}
-	// 4. 一键启动服务
-	_, err := bootstrap.Boot(bootCfg)
-	if err != nil {
-		panic("应用启动失败: " + err.Error())
-	}
+    connManager := websocket.GetGlobalConnManager()
+    eventMgr := connManager.GetEventManager()
+    customListener := ws.NewCustomConnListener()
+    eventMgr.RegisterHandler(customListener)
 }
 ```
 
-## 3.4 gRPC服务开发
+---
 
-### 3.4.1 定义Protobuf文件
+## 多协议开发指南
 
-文件路径：proto/user.proto
+### HTTP 开发
 
-### 3.4.2 生成gRPC代码
+HTTP 控制器方法签名：
 
-执行以下命令生成.pb.go和_grpc.pb.go文件（需安装Protobuf编译器及go插件）：
+```go
+func (c *Controller) Method(ctx netContext.Context) {
+    c.Init(ctx)
+    // 业务逻辑
+}
+```
 
-```Plain Text
+**参数获取**：
 
+```go
+// 获取 POST 表单参数
+id := c.GetPostForm("id")
+// 获取所有 POST 参数
+params := c.GetPostFormAll()
+// 获取 Query 参数
+id := ctx.Query("id")
+// 获取请求头
+sign := ctx.GetRequestInfo().GetHeader("sign")
+// 获取客户端IP
+ip := ctx.GetRequestInfo().GetClientIP()
+// 获取请求体
+body, err := c.GetBody()
+// JSON 绑定
+var req MyRequest
+err := ctx.BindJSON(&req)
+```
 
+**路由注册**：
+
+```go
+server.POST("/user/info", http.ToHTTPHandler(r.userController.GetUser), middleware.Auth())
+server.GET("/user/list", http.ToHTTPHandler(r.userController.GetList))
+server.PUT("/user/update", http.ToHTTPHandler(r.userController.Update))
+server.DELETE("/user/delete", http.ToHTTPHandler(r.userController.Delete))
+```
+
+### WebSocket 开发
+
+WebSocket 控制器使用 `WsInit` 初始化：
+
+```go
+func (c *Controller) Login(ctx netContext.Context) {
+    c.WsInit(ctx)
+    userId := c.GetPostForm("user_id")
+    // 绑定用户ID到当前连接
+    err := c.BindUserID(userId)
+    if err != nil {
+        c.Error(400, err.Error())
+        return
+    }
+    c.Success(nil, "登录成功")
+}
+```
+
+**消息推送**：
+
+```go
+// 给指定用户推送消息
+c.SendToUser(userId, "message.notify", map[string]interface{}{
+    "content": "您有新的消息",
+})
+
+// 给指定连接推送消息
+c.SendToConnID(connID, "message.notify", data)
+
+// 批量给多个用户推送
+c.SendToUsers([]string{userId1, userId2}, "broadcast", data)
+```
+
+**WebSocket 路由注册**：
+
+```go
+func (r *ApiRouter) RegisterWSRoutes(server *websocket.Server) {
+    server.Register("login", websocket.ToWSHandler(r.userController.Login))
+    server.Register("message.send", websocket.ToWSHandler(r.messageController.Send))
+}
+```
+
+### gRPC 开发
+
+#### 1. 定义 Protobuf 文件
+
+```protobuf
 syntax = "proto3";
-
 package user;
 option go_package = "./gen/user;user";
 
-// 用户请求参数（增加商户编码，适配服务层）
 message UserRequest {
-    string merchant_code = 1; // 商户编码
-    uint64 id = 2; // 用户ID
+    int32 id = 1;
 }
 
-// 用户响应数据
-message UserData {
-    uint64 id = 1;
-    string merchant_code = 2; // 商户编码
-    string username = 3;
-    int32 age = 4;
-    string email = 5;
-    int64 create_at = 6;
-}
-
-// 用户服务响应
 message UserResponse {
-    int32 code = 1; // 状态码（0成功，非0失败）
-    string msg = 2; // 提示信息
-    UserData data = 3; // 响应数据
+    int32 code = 1;
+    string msg = 2;
+    UserData data = 3;
 }
 
-// 用户服务接口定义
+message UserData {
+    int32 id = 1;
+    string username = 2;
+    string email = 3;
+}
+
 service UserService {
     rpc GetUser(UserRequest) returns (UserResponse);
 }
 ```
 
+#### 2. 生成 gRPC 代码
+
 ```bash
-
-# 生成代码到gen/user目录
 protoc --go_out=./gen/user --go_opt=paths=source_relative \
-  --go-grpc_out=./gen/user --go-grpc_opt=paths=source_relative \
-  proto/user.proto
+       --go-grpc_out=./gen/user --go-grpc_opt=paths=source_relative \
+       proto/user.proto
 ```
 
-### 3.4.3 编写gRPC控制器
-
-文件路径：app/api/controller/grpc_user_controller.go
-
-```Plain Text
-
-package controller
-
-import (
-	"context"
-	"github.com/dfpopp/go-dai/base"
-	"merchantServer/app/api/service/user"
-	"merchantServer/gen/user" // 引入生成的gRPC代码包
-)
-
-// GrpcUserController gRPC用户控制器（最小改动适配标准gRPC，核心业务逻辑复用服务层）
-type GrpcUserController struct {
-	*base.BaseController                // 继承基础控制器，复用公共能力
-	user.UnimplementedUserServiceServer // 嵌入gRPC默认实现，保证兼容性
-	Service *user.Service               // 复用用户服务，服务层逻辑完全无改动
-}
-
-// NewGrpcUserController 创建gRPC控制器实例（初始化服务依赖）
-func NewGrpcUserController() *GrpcUserController {
-	return &GrpcUserController{
-		BaseController: &base.BaseController{},
-		Service:        user.NewUserService(), // 复用同一服务层，无需重复开发
-	}
-}
-
-// GetUser 实现gRPC的UserService接口（仅适配gRPC上下文和请求/响应格式，业务逻辑复用服务层）
-func (c *GrpcUserController) GetUser(ctx context.Context, req *user.UserRequest) (*user.UserResponse, error) {
-	// 1. 校验gRPC请求参数（仅参数格式适配，校验逻辑与HTTP/WS一致）
-	userId := req.GetId()
-	if userId == "" {
-		// 适配gRPC的错误响应格式
-		return &user.UserResponse{
-			Code: 400,
-			Msg:  "用户ID不能为空",
-		}, nil
-	}
-
-	// 2. 调用服务层逻辑（完全复用HTTP/WS的服务调用逻辑，无任何修改）
-	userInfo, err := c.Service.GetUserById(userId)
-	if err != nil {
-		return &user.UserResponse{
-			Code: 500,
-			Msg:  err.Error(),
-		}, nil
-	}
-	if userInfo == nil {
-		return &user.UserResponse{
-			Code: 500,
-			Msg:  "用户不存在",
-		}, nil
-	}
-
-	// 3. 适配gRPC响应格式（仅数据格式转换，无业务逻辑改动）
-	return &user.UserResponse{
-		Code:     0,
-		Msg:      "操作成功",
-		Data: &user.UserData{
-			Id:       userInfo.ID,
-			Username: userInfo.Username,
-			Age:      int32(userInfo.Age),
-			Email:    userInfo.Email,
-			CreateAt: userInfo.CreateAt,
-		},
-	}, nil
-}
-```
-
-### 3.4.4 配置gRPC路由（实现BaseRouter接口）
-
-文件路径：app/api/router/grpc_router.go（实现框架BaseRouter接口，统一管理gRPC路由）
-
-```Plain Text
-
-package router
-
-import (
-	"google.golang.org/grpc"
-	"merchantServer/app/api/controller"
-	"merchantServer/gen/user" // 引入生成的user服务gRPC代码
-)
-
-// ApiRouter API路由（实现框架BaseRouter接口，复用结构体，统一管理多协议路由）
-type ApiRouter struct {
-	grpcUserController *controller.GrpcUserController // 仅保留gRPC用户控制器
-}
-
-// NewApiRouter 创建API路由实例（供入口文件调用初始化）
-func NewApiRouter() *ApiRouter {
-	return &ApiRouter{
-		grpcUserController: controller.NewGrpcUserController(), // 初始化gRPC用户控制器
-	}
-}
-
-// RegisterGRPCRoutes 注册gRpc路由（框架约定方法名，用于绑定gRPC服务路由）
-func (r *ApiRouter) RegisterGRPCRoutes(grpcServer *grpc.Server) {
-	// 使用标准gRPC注册方法，将用户控制器实现注册到gRPC服务
-	user.RegisterUserServiceServer(grpcServer, r.grpcUserController)
-	// 可添加更多gRPC服务注册...
-}
-```
-
-通过该分层设计，当需要新增或切换服务协议时，仅需开发/修改对应协议的控制器适配代码，服务层和模型层无需任何改动，实现“一次开发，多协议复用”。
-
-### 3.4.5 启动gRPC服务
-
-文件路径：api.go（支持单独启动gRPC服务，或与HTTP/WS服务同时启动）
-
-```Plain Text
-
-package main
-
-import (
-	"github.com/dfpopp/go-dai/bootstrap"
-	"github.com/dfpopp/go-dai/config"
-	"google.golang.org/grpc"
-	"merchantServer/app/api/router"
-	pkgConfig "merchantServer/pkg/config"
-)
-
-func init() {
-	config.RegisterPostLoadHook(pkgConfig.CustomConfigLoadHook)
-}
-func main() {
-	// 1. 加载配置
-	appName := "api"
-	if err := config.LoadAppConfig("config/app.json", appName); err != nil {
-		panic("加载应用配置失败：" + err.Error())
-	}
-	if err := config.LoadDatabaseConfig("config/database.json"); err != nil {
-		panic("加载数据库配置失败：" + err.Error())
-	}
-
-	// 2. 初始化路由实例（统一管理gRPC路由）
-	apiRouter := router.NewApiRouter()
-
-	// 3. 构建启动配置（单独启用gRPC服务）
-	bootCfg := &bootstrap.BootConfig{
-		AppName:            "api",
-		AppConfigPath:      "config/app.json",
-		DatabaseConfigPath: "config/database.json",
-		EnableServices:     []bootstrap.ServiceType{bootstrap.ServiceTypeGRPC}, // 仅启用gRPC服务
-		Router:             apiRouter, // 绑定路由实例，框架自动调用RegisterGRPCRoutes方法
-		// 自定义gRPC服务配置（可选）
-		GrpcServerOpts: []grpc.ServerOption{
-			grpc.MaxRecvMsgSize(4 * 1024 * 1024), // 最大接收消息大小4MB
-		},
-	}
-	// 4. 一键启动服务
-	_, err := bootstrap.Boot(bootCfg)
-	if err != nil {
-		panic("应用启动失败: " + err.Error())
-	}
-}
-```
-
-# 4. 核心模块详解
-
-## 4.1 路由模块（Router）
-
-go-Dai框架的路由模块通过实现BaseRouter接口统一管理，支持路由分组、中间件绑定等能力，以下是贴合本框架的示例：
-
-### 4.1.1 路由分组示例（HTTP）
-
-```Plain Text
-
-
-// app/api/router/http_router.go（本框架标准路由分组实现）
-package router
-
-import (
-    "github.com/dfpopp/go-dai/http"
-    "merchantServer/app/api/controller"
-    "merchantServer/app/api/middleware"
-)
-
-// ApiRouter 实现框架BaseRouter接口
-type ApiRouter struct {
-    userController *controller.UserController
-}
-
-func NewApiRouter() *ApiRouter {
-    return &ApiRouter{
-        userController: controller.NewUserController(),
-    }
-}
-
-// RegisterHTTPRoutes 注册HTTP路由（框架约定方法）
-func (r *ApiRouter) RegisterHTTPRoutes(server *http.Server) {
-    // 1. 路由分组：/api/v1（统一前缀）
-    v1Group := server.Group("/api/v1")
-    {
-        // 分组绑定全局中间件（如日志+认证）
-        v1Group.Use(middleware.LogMiddleware, middleware.AuthMiddleware)
-
-        // 2. 子分组：用户相关路由
-        userGroup := v1Group.Group("/user")
-        {
-            // 注册路由：/api/v1/user/:id（GET）
-            userGroup.GET(":id", http.ToHTTPHandler(r.userController.GetUser), middleware.RateLimit(100))
-            // 注册路由：/api/v1/user（POST）
-            userGroup.POST("", http.ToHTTPHandler(r.userController.CreateUser))
-        }
-
-        // 3. 子分组：订单相关路由（示例，复用控制器注入方式）
-        orderController := controller.NewOrderController()
-        orderGroup := v1Group.Group("/order")
-        {
-            orderGroup.GET(":id", http.ToHTTPHandler(orderController.GetOrderInfo))
-        }
-    }
-}
-```
-
-### 4.1.2 路由参数解析
-
-框架的netContext上下文对象通过`GetRequestInfo()`方法获取请求相关信息，仅支持Query、PostForm、BindJSON获取数据，以下是贴合框架实际功能的参数解析示例：
-
-```Plain Text
-
-
-// 1. 路径参数解析（对应路由：/api/v1/user/:id）
-// 通过GetRequestInfo().GetPath()获取完整路径，自行解析路径参数（框架不提供Param相关方法）
-func (c *UserController) GetUser(ctx netContext.Context) {
-    // 获取完整请求路径
-    path := ctx.GetRequestInfo().GetPath()
-    // 解析路径中的id参数（示例：从路径/api/v1/user/123中提取123）
-    // 实际项目中可封装路径参数解析工具函数，此处简化演示
-    userIdStr := strings.TrimPrefix(path, "/api/v1/user/")
-    userId, err := strconv.ParseUint(userIdStr, 10, 64)
-    if err != nil || userId <= 0 {
-        c.Error(400, "用户ID格式错误")
-        return
-    }
-}
-
-// 2. 查询参数解析（对应路由：/api/v1/user?name=test&age=20）
-// 使用框架支持的GetQuery方法
-func (c *UserController) SearchUser(ctx netContext.Context) {
-    // 获取查询参数（字符串类型）
-    userName := ctx.GetQuery("name")
-    // 获取查询参数（整数类型，需自行转换）
-    ageStr := ctx.GetQuery("age")
-    age := 18 // 默认值
-    if ageStr != "" {
-        ageInt, err := strconv.Atoi(ageStr)
-        if err == nil {
-            age = ageInt
-        }
-    }
-}
-
-// 3. 表单参数解析（POST x-www-form-urlencoded）
-// 使用框架支持的PostForm方法
-func (c *UserController) CreateUser(ctx netContext.Context) {
-    // 单个表单参数获取
-    username := ctx.PostForm("username")
-    ageStr := ctx.PostForm("age")
-    age := 0
-    if ageStr != "" {
-        age, _ = strconv.Atoi(ageStr)
-    }
-
-    // 批量绑定到结构体（使用框架支持的BindJSON，表单参数需先转为JSON或自行封装BindForm）
-    type CreateUserReq struct {
-        Username string `json:"username"`
-        Age      int    `json:"age"`
-        Email    string `json:"email"`
-    }
-    var req CreateUserReq
-    // 若前端提交表单，可先通过PostForm获取所有参数组装为结构体，再调用BindJSON（或框架支持的表单绑定方式）
-    // 此处演示适配BindJSON的用法，实际可根据框架表单绑定能力调整
-    req.Username = username
-    req.Age = age
-    req.Email = ctx.PostForm("email")
-}
-
-// 4. JSON参数解析（POST application/json，WS消息也支持此方法）
-// 使用框架支持的BindJSON方法
-func (c *WsUserController) GetUser(ctx netContext.Context) {
-    type Req struct {
-        ID string `json:"id"`
-    }
-    var req Req
-    if err := ctx.BindJson(&req); err != nil {
-        c.Error(400, "JSON格式错误")
-        return
-    }
-    // 解析ID为uint64
-    userId, err := strconv.ParseUint(req.ID, 10, 64)
-    if err != nil || userId <= 0 {
-        c.Error(400, "用户ID格式错误")
-        return
-    }
-}
-
-// 5. 其他请求信息获取（请求方式、IP、请求头）
-func (c *UserController) TestRequestInfo(ctx netContext.Context) {
-    // 获取请求方式（GET/POST等）
-    method := ctx.GetRequestInfo().GetMethod()
-    // 获取客户端IP
-    clientIP := ctx.GetRequestInfo().GetClientIP()
-    // 获取请求头信息
-    token := ctx.GetRequestInfo().GetHeader("Authorization")
-    fmt.Printf("请求方式：%s，客户端IP：%s，Authorization：%s\n", method, clientIP, token)
-}
-```
-
-## 4.2 数据库模块（Database）
-
-数据库模块支持多引擎兼容，提供统一的链式调用API，语法贴近PHP的Eloquent ORM，降低数据库操作学习成本。
-
-### 4.2.1 核心操作示例（MySQL）
+#### 3. 编写 gRPC 控制器
 
 ```go
+package user
 
-// 1. 新增数据
-user := &model.User{Username: "test", Age: 20, Email: "test@example.com"}
-result := database.DB().Model(user).Create()
-if result.Error != nil {
-// 错误处理
+import (
+    "context"
+    "github.com/dfpopp/go-dai/base"
+    userGen "myproject/gen/user"
+    userService "myproject/app/api/service/user"
+)
+
+type Controller struct {
+    *base.BaseController
+    userGen.UnimplementedUserServiceServer
+    userService *userService.Service
 }
-fmt.Println("新增用户ID：", user.ID)
 
-// 2. 更新数据
-result = database.DB().Model(&model.User{}).Where("id = ?", 1).Update(map[string]interface{}{
-"age": 21,
+func NewController() *Controller {
+    return &Controller{
+        BaseController:                 &base.BaseController{},
+        UnimplementedUserServiceServer: userGen.UnimplementedUserServiceServer{},
+        userService:                    userService.NewService(),
+    }
+}
+
+func (c *Controller) GetUser(ctx context.Context, req *userGen.UserRequest) (*userGen.UserResponse, error) {
+    userId := int(req.Id)
+    if userId <= 0 {
+        return &userGen.UserResponse{Code: 400, Msg: "用户ID非法"}, nil
+    }
+    userInfo, err := c.userService.GetUserById(userId)
+    if err != nil {
+        return &userGen.UserResponse{Code: 500, Msg: err.Error()}, nil
+    }
+    return &userGen.UserResponse{
+        Code: 0,
+        Msg:  "操作成功",
+        Data: &userGen.UserData{
+            Id:       int32(userInfo.Id),
+            Username: userInfo.Username,
+            Email:    userInfo.Email,
+        },
+    }, nil
+}
+```
+
+#### 4. 注册 gRPC 路由
+
+```go
+func (r *ApiRouter) RegisterGRPCRoutes(grpcServer *grpc.Server) {
+    userGen.RegisterUserServiceServer(grpcServer.GrpcServer, r.grpcUserController)
+}
+```
+
+### 三种协议对比
+
+| 维度 | HTTP | WebSocket | gRPC |
+|-----|------|-----------|------|
+| 控制器继承 | `base.BaseController` | `base.BaseController` | `base.BaseController` + `UnimplementedXXXServer` |
+| 方法签名 | `func(ctx netContext.Context)` | `func(ctx netContext.Context)` | `func(ctx context.Context, req *Request) (*Response, error)` |
+| 初始化方法 | `c.Init(ctx)` | `c.WsInit(ctx)` | 标准方法 |
+| 参数获取 | `c.GetPostForm("id")` | `ctx.BindJSON(&req)` | 直接访问 `req.Id` |
+| 响应返回 | `c.Success(data)` | `c.Success(data)` | 返回 `&Response{Code:0, Data:data}` |
+| 路由标识 | URL路径 + HTTP方法 | action | 服务名 + 方法名 |
+| 路由注册 | `server.POST("/path", handler)` | `wsServer.Register("action", handler)` | `RegisterXXXServiceServer(server, controller)` |
+| 中间件 | `middleware.Auth()` | WS 中间件 | gRPC 拦截器 |
+
+---
+
+## 数据库操作指南
+
+### MySQL 链式操作
+
+```go
+db, err := m.GetMysqlDb(m.DbTag)
+if err != nil {
+    return err
+}
+ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+defer cancel()
+
+// 单条查询
+retStr, err := db.SetTable("users").
+    SetField("id,username,email").
+    SetWhere("id=?", userId).
+    Find(ctx)
+
+// 列表查询
+retStr, err := db.SetTable("users").
+    SetField("id,username,email").
+    SetWhere("status=?", "Y").
+    SetOrder("create_time DESC").
+    SetLimit(0, 10).
+    FindAll(ctx).ToString()
+
+// 总数查询
+count, err := db.SetTable("users").
+    SetWhere("status=?", "Y").
+    FindCount(ctx)
+
+// 插入
+id, err := db.SetTable("users").Insert(ctx, map[string]interface{}{
+    "username": "test",
+    "email":    "test@example.com",
 })
 
-// 3. 条件查询
-var users []*model.User
-database.DB().Model(&model.User{}).
-Where("age > ?", 18).
-OrderBy("create_at DESC").
-Limit(10).
-Find(&users)
+// Upsert（幂等写入：唯一键冲突时把指定列更新为本次插入的对应值）
+_, err = db.SetTable("ios_uid_map").SetUpsert("uid", "product_id", "account").Insert(ctx, map[string]interface{}{
+    "uid":                    "10001",
+    "original_transaction_id": "2000012345678901",
+    "product_id":             "com.xxx.member.12m",
+    "account":                "userA",
+})
+// 生成：INSERT INTO ios_uid_map (...) VALUES (...)
+//       ON DUPLICATE KEY UPDATE `uid` = ?, `product_id` = ?, `account` = ?
 
-// 4. 事务操作
-tx := database.DB().Begin()
-defer func() {
-if r := recover(); r != nil {
-tx.Rollback()
-}
-}()
-if err := tx.Error; err != nil {
-// 事务启动失败
-}
-// 事务内操作
-tx.Model(&model.User{}).Create(&user1)
-tx.Model(&model.User{}).Create(&user2)
-tx.Commit()
+// 更新
+affected, err := db.SetTable("users").
+    SetWhere("id=?", userId).
+    Update(ctx, map[string]interface{}{"email": "new@example.com"})
+
+// 删除
+affected, err := db.SetTable("users").
+    SetWhere("id=?", userId).
+    Delete(ctx)
+
+// 事务
+err = db.ToBegin()
+// ... 业务操作
+err = db.Commit()
+// 或 err = db.Rollback()
 ```
 
-### 4.2.2 多数据库引擎切换
+**MySQL 链式方法**：
 
-通过配置文件区分不同数据库引擎，使用时指定即可：
+| 方法 | 说明 |
+|-----|------|
+| `SetTable(table)` | 设置表名 |
+| `SetField(field)` | 设置查询字段 |
+| `SetWhere(tpl, args...)` | 设置 WHERE 条件 |
+| `SetWhereOr(data)` | 设置 OR 条件 |
+| `SetWhereIn(field, args...)` | 设置 IN 条件 |
+| `SetOrder(order)` | 设置排序 |
+| `SetGroup(group)` | 设置分组 |
+| `SetJoin(table, condition, joinType)` | 设置 JOIN |
+| `SetLimit(skip, num)` | 设置分页 |
+| `Find(ctx)` | 查询单条 |
+| `FindAll(ctx)` | 查询多条（需配合 ToString） |
+| `FindCount(ctx)` | 查询总数 |
+| `Insert(ctx, data)` | 插入 |
+| `InsertAll(ctx, dataList)` | 批量插入 |
+| `SetUpsert(cols...)` | 设置唯一键冲突更新的列（配合 Insert/InsertAll 生成 ON DUPLICATE KEY UPDATE） |
+| `Update(ctx, data)` | 更新 |
+| `Delete(ctx)` | 删除 |
+| `ToBegin/Commit/Rollback` | 事务控制 |
+
+### MongoDB 链式操作
 
 ```go
+mgDb, err := m.GetMongoDb(m.DbTag)
+if err != nil {
+    return err
+}
+ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+defer cancel()
 
-// 操作MySQL（默认引擎，配置在database.json的default字段）
-database.DB().Model(&model.User{}).First()
+// 单条查询
+retStr, err := mgDb.SetTable("member").
+    SetWhere(bson.D{{"uid", uid}, {"site", site}}).
+    Find(ctx)
 
-// 操作Redis
-redisClient := database.Redis("default") // default对应database.json中redis的配置
-redisClient.Set("key", "value", 3600)
+// 列表查询
+retStr, err := mgDb.SetTable("member").
+    SetWhere(bson.D{{"partner", "wendou"}}).
+    SetSort(bson.D{{"createTime", -1}}).
+    SetSkip((page - 1) * pageSize).
+    SetLimit(pageSize).
+    FindAll(ctx).ToString()
 
-// 操作ElasticSearch
-esClient := database.ES("default")
-esClient.Index("users").Id("1").BodyJson(user).Do(context.Background())
+// 跨库查询（动态切换数据库与表前缀）
+retStr, err := mgDb.SetDbName("gczb").
+    SetTablePre("").
+    SetTable("member").
+    SetProjection(bson.D{{"_id", 1}, {"account", 1}}).
+    SetWhere(bson.D{{"_id", objectId}}).
+    Find(ctx)
+
+// 插入
+objectId, err := mgDb.SetTable("member").Insert(ctx, data)
+
+// 更新
+affected, err := mgDb.SetTable("member").
+    SetWhere(bson.D{{"_id", objectId}}).
+    Update(ctx, bson.D{{"$set", bson.D{{"mobile", phone}}}})
+
+// 删除
+affected, err := mgDb.SetTable("member").
+    SetWhere(bson.D{{"_id", objectId}}).
+    Delete(ctx)
 ```
 
-## 4.3 中间件模块（Middleware）
+**MongoDB 链式方法**：
 
-框架支持HTTP/WS/gRPC通用的中间件机制，可用于请求认证、日志记录、限流、跨域处理等场景。中间件支持全局注册、路由分组注册、单个路由注册。
+| 方法 | 说明 |
+|-----|------|
+| `SetDbName(dbName)` | 设置数据库名（支持跨库） |
+| `SetTablePre(pre)` | 设置表前缀 |
+| `SetTable(col)` | 设置集合名 |
+| `SetWhere(filter)` | 设置查询条件（bson.D） |
+| `SetSort(sort)` | 设置排序 |
+| `SetLimit(limit)` | 设置限制条数 |
+| `SetSkip(skip)` | 设置跳过条数 |
+| `SetProjection(proj)` | 设置投影字段 |
+| `SetAgg(pipeline)` | 设置聚合管道 |
+| `Find(ctx)` | 查询单条 |
+| `FindAll(ctx)` | 查询多条 |
+| `FindCount(ctx)` | 查询总数 |
+| `Aggregate(ctx)` | 聚合查询 |
+| `Insert(ctx, doc)` | 插入 |
+| `InsertAll(ctx, docs)` | 批量插入 |
+| `Update(ctx, update)` | 更新 |
+| `Delete(ctx)` | 删除 |
 
-### 4.3.1 自定义中间件示例（日志记录）
+### Redis 操作
 
 ```go
+redisDb, err := m.GetRedis("default")
+if err != nil {
+    return err
+}
 
-// app/api/middleware/log_middleware.go
-package middleware
+// 设置值（带过期时间）
+err = redisDb.Db.Set(ctx, "key", "value", 10*time.Minute).Err()
 
-import (
-	"fmt"
-	"time"
-	"github.com/dfpopp/go-dai/context"
+// 获取值
+val, err := redisDb.Db.Get(ctx, "key").Result()
+
+// 分布式锁
+ok, err := redisDb.Db.SetNX(ctx, "lock_key", 1, 2*time.Second).Result()
+
+// 自增
+err = redisDb.Db.Incr(ctx, "counter").Err()
+
+// 删除
+err = redisDb.Db.Del(ctx, "key").Err()
+```
+
+**注意**：Redis 操作使用 `redisDb.DbPre` 作为 key 前缀，避免多应用 key 冲突。
+
+### ElasticSearch 操作
+
+```go
+esDb, err := m.GetESDb(m.DbTag)
+if err != nil {
+    return err
+}
+ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+defer cancel()
+
+// 列表查询
+retStr, err := esDb.SetHighlight("title", elasticSearch.HighlightOption{
+    PreTag: "<font style='color:red'>",
+    PostTag: "</font>",
+}).
+    SetExcludeSource("content", "absentFields").
+    SetScriptFieldTruncate("content", 100).
+    SetLimit((page-1)*pageSize, pageSize).
+    FindAll(ctx).ToString()
+
+// 总数查询
+count, err := esDb.FindCount(ctx)
+```
+
+**常用链式能力**：`SetAggs`（聚合）、`SetCollapse`（字段去重折叠）、`SetTrackTotalHits`（精确总命中数，ES 7+ 默认 1 万上限）、`SetSearchTimeout`（服务端查询超时降级）、`SetHighlight`（高亮）、`SetScriptField*`（脚本字段）等。
+
+### PostgreSQL 链式操作
+
+链式 API 与 MySQL 同名同参，差异由框架内部消化：
+
+```go
+db, err := m.GetPostgresDb(m.DbTag)
+
+// 查询：代码照常写 ?，执行前自动转 $1..$n；SetLimit(skip,num) 自动转 LIMIT num OFFSET skip
+retStr, err := db.SetTable("orders").
+    SetField("id,order_no,amount").
+    SetWhere("user_id=?", userId).
+    SetLimit(0, 10).
+    FindAll(ctx).ToString()
+
+// 插入：数据含 id 字段时自动 RETURNING "id" 返回自增值，否则返回 0
+id, err := db.SetTable("orders").Insert(ctx, data)
+```
+
+> 注意：`Delete` 不支持 LIMIT；表名引用自动加双引号，支持 `SetTable("schema.table")`。
+
+### ClickHouse 链式操作
+
+链式 API 与 MySQL 同名同参；无事务；`Update`/`Delete` 自动转为 `ALTER TABLE` 异步 mutation：
+
+```go
+db, err := m.GetClickhouseDb(m.DbTag)
+
+// 聚合统计
+count, err := db.SetTable("events").
+    SetField("id").
+    SetWhere("action=?", action).
+    FindCount(ctx)
+
+// 行级展开（ARRAY JOIN）：数组列逐元素展开成行后分组/计数
+count, err := db.SetTable("ztb").
+    SetArrayJoin("zbhx AS x").
+    SetField("DISTINCT x").
+    SetWhere("arrayExists(x -> x = ?, zbhx)", companyName).
+    FindCount(ctx)
+```
+
+> 注意：CH 无事务，批量写入用 `InsertAll` 单次提交；`Insert` 返回受影响行数，主键由业务生成；Update/Delete 异步执行，需后台完成后查询结果。
+
+---
+
+## 落地应用案例
+
+框架已在多个生产项目中落地，以下为三个典型应用案例。
+
+### 案例 1：bidResourceServer（标书资源服务）
+
+**项目定位**：标书文档、视频课程、专家咨询的电商型资源服务平台。
+
+**技术特点**：
+
+- 多应用架构：`app/api`（C端接口）、`app/seller`（商家端）、`app/cron`（定时任务）
+- 多入口文件：`api.go`、`seller.go`、`cron.go`
+- 多数据库混合使用：MySQL（订单/用户）、MongoDB（文档/视频）、Redis（缓存/锁）
+- 第三方集成：阿里 OSS、阿里短信、支付宝、微信支付、文兜 API、AI 大模型（豆包）
+
+**目录结构亮点**：
+
+```
+bidResourceServer/
+├── app/
+│   ├── api/              # C端接口应用
+│   ├── seller/           # 商家端应用
+│   └── cron/             # 定时任务应用
+├── pkg/                  # 第三方依赖包
+│   ├── Ai/ark/           # AI 大模型集成
+│   ├── aliOss/           # 阿里 OSS
+│   ├── aliSms/           # 阿里短信
+│   └── pay/              # 支付集成（支付宝/微信）
+├── api.go                # C端入口
+├── seller.go             # 商家端入口
+└── cron.go               # 定时任务入口
+```
+
+**典型业务场景**：
+
+- 标书文档列表查询、详情、下载、章节同步
+- 视频课程播放、收藏、购买
+- 订单创建、支付、分佣
+- 定时任务：文档章节同步、预览图生成、订单状态同步
+
+### 案例 2：openServer（开放平台服务）
+
+**项目定位**：对外开放的标讯数据 API 平台，提供标讯列表、详情、按企业查询等接口。
+
+**技术特点**：
+
+- ElasticSearch 全文检索：标讯数据存储于 ES，支持高亮、分页、复杂查询
+- 多租户鉴权：基于 appId/appSecret 的签名认证，支持接口级权限控制
+- 多级限流：基于 Redis 的请求频率限制，按租户配置限流阈值
+- 日志中间件：记录所有 API 请求日志，支持统计分析
+
+**中间件组合示例**：
+
+```go
+server.POST("/biddingInfo/list",
+    http.ToHTTPHandler(r.biddingInfoController.GetList),
+    middleware.Auth(),      // 签名认证 + 权限校验
+    middleware.RateLimit(), // 限流
+    middleware.Logger(),    // 请求日志
 )
-
-// LogMiddleware 日志中间件
-func LogMiddleware(ctx *context.HttpContext) {
-	// 前置处理：记录请求开始时间
-	startTime := time.Now()
-
-	// 执行下一个中间件/控制器
-	ctx.Next()
-
-	// 后置处理：记录请求信息
-	endTime := time.Now()
-	fmt.Printf("请求路径：%s，方法：%s，耗时：%v，状态码：%d\n",
-		ctx.Request.URL.Path,
-		ctx.Request.Method,
-		endTime.Sub(startTime),
-		ctx.Response.StatusCode)
-}
 ```
 
-### 4.3.2 中间件注册
+**典型业务场景**：
 
-```go
+- 标讯列表查询（支持多条件筛选、高亮）
+- 标讯详情查询（含加密详情）
+- 按企业名称查询标讯
+- 区域数据查询（省/市）
+- API 调用统计与日志分析
 
-// 1. 全局注册（所有HTTP请求生效）
-app.HttpGlobalMiddleware(middleware.LogMiddleware)
+### 案例 3：ldPartnerServer（合作伙伴服务）
 
-// 2. 路由分组注册（仅该分组生效）
-v1 := r.Group("/api/v1")
-v1.Use(middleware.LogMiddleware, middleware.AuthMiddleware)
+**项目定位**：多站点合作伙伴的分佣结算平台，对接文兜、善达等多个合作方。
 
-// 3. 单个路由注册（仅该路由生效）
-r.GET("/user/:id", userCtrl.GetUser, middleware.LogMiddleware)
-```
+**技术特点**：
 
-## 4.4 配置模块（Config）
+- 多站点配置：通过 `custom.json` 的 `inSite`/`outSite` 配置管理多站点数据库与密钥
+- 跨库查询：动态切换 MongoDB 数据库（`SetDbName`/`SetTablePre`）查询不同站点用户
+- 加密通信：RC4 + Base64 编码生成 ucode，实现用户身份加密传递
+- 多支付渠道：支付宝（App/H5/PC）、微信支付（JSAPI/小程序/App/H5/PC）
+- 对账系统：日/周/月对账，自动同步订单与分佣数据
 
-配置模块支持JSON格式配置文件，支持多环境（开发、测试、生产）配置切换，支持自定义配置读取钩子。
-
-### 4.4.1 配置文件示例（config/app.json）
+**多站点配置示例**：
 
 ```json
-
 {
-  "app_name": "go-dai-example",
-  "env": "dev", // 环境：dev/test/prod
-  "http": {
-    "port": 8080,
-    "read_timeout": 30,
-    "write_timeout": 30
+  "inSite": {
+    "ld":  {"mgDb": "gczb", "pre": ""},
+    "gc":  {"mgDb": "gczb_new", "pre": ""},
+    "by":  {"mgDb": "biaoYan", "pre": ""},
+    "newcc": {"mgDb": "newcc", "pre": ""}
   },
-  "ws": {
-    "port": 8081,
-    "max_conn": 10000
-  },
-  "grpc": {
-    "port": 8082,
-    "max_recv_msg_size": 4194304
+  "outSite": {
+    "sd": "3cdb54f9031b75edd981bcd3ad37f9bf",
+    "wd": "3cdb54f9031b75edd981bcd3ad19fbdf"
   }
 }
 ```
 
-### 4.4.2 配置读取方式
+**典型业务场景**：
+
+- 用户同步：将各站点用户同步到合作伙伴库
+- 订单推送：接收合作方订单推送，落库并同步状态
+- 支付处理：支持多渠道支付，处理支付回调
+- 对账结算：按日/周/月生成对账单，计算分佣金额
+
+### 三个案例的共同模式
+
+通过分析三个落地应用，可提炼出基于 go-Dai 框架的通用开发模式：
+
+1. **统一入口**：使用 `bootstrap.Boot` 一键启动，通过 `EnableServices` 控制服务类型
+2. **MVC 严格分层**：Controller 仅做参数校验与响应封装，业务逻辑在 Service，数据操作在 Model
+3. **链式数据库操作**：MySQL/MongoDB/ES 均支持链式调用，代码简洁高效
+4. **中间件组合**：Auth + RateLimit + Logger 的标准中间件组合
+5. **配置驱动**：通过 `custom.json` 管理多站点、多租户的业务配置
+6. **pkg 目录复用**：第三方依赖统一放在 `pkg/` 目录，便于跨应用复用
+
+---
+
+## 常见问题
+
+### Q1：如何同时启动多个服务？
+
+使用 `EnableServices` 参数指定多个服务类型：
 
 ```go
-
-import "github.com/dfpopp/go-dai/config"
-
-// 读取HTTP端口
-httpPort := config.GetInt("http.port")
-
-// 读取字符串配置
-appName := config.GetString("app_name")
-
-// 读取自定义配置（config/custom.json）
-customVal := config.GetString("custom.key")
-
-// 配置钩子：自定义配置读取逻辑
-config.RegisterHook(func() error {
-// 此处可添加配置加密解密、动态配置拉取等逻辑
-return nil
-})
+EnableServices: []bootstrap.ServiceType{
+    bootstrap.ServiceTypeHTTP,
+    bootstrap.ServiceTypeWS,
+    bootstrap.ServiceTypeGRPC,
+}
 ```
 
-# 5. 进阶配置与扩展
+### Q2：如何实现 WebSocket 用户绑定？
 
-## 5.1 多应用配置
-
-框架支持多应用部署，通过在app目录下创建多个应用目录（如api、admin），并在配置文件中区分应用配置：
-
-```text
-
-├─ app/
-│  ├─ api/       接口应用
-│  └─ admin/     管理后台应用
-├─ config/
-│  ├─ app.json
-│  ├─ api.app.json  api应用专属配置
-│  └─ admin.app.json  admin应用专属配置
-```
-
-启动多应用：
+在控制器中调用 `BindUserID` 方法：
 
 ```go
-
-// 启动api应用
-app.RunApp("api")
-
-// 同时启动多个应用
-app.RunApps([]string{"api", "admin"})
+func (c *Controller) Login(ctx netContext.Context) {
+    c.WsInit(ctx)
+    userId := c.GetPostForm("user_id")
+    err := c.BindUserID(userId)
+    if err != nil {
+        c.Error(400, err.Error())
+        return
+    }
+    c.Success(nil, "登录成功")
+}
 ```
 
-## 5.2 自定义日志
+### Q3：如何实现 WebSocket 消息推送？
 
-框架默认将日志输出到runtime/log目录，支持自定义日志输出格式、级别、输出方式（文件/控制台）：
+使用 `SendToUser` 或 `SendToConnID` 方法：
 
 ```go
-
-import "github.com/dfpopp/go-dai/log"
-
-// 配置日志级别（debug/info/warn/error）
-log.SetLevel(log.DebugLevel)
-
-// 自定义日志输出格式
-log.SetFormatter(&log.TextFormatter{
-TimestampFormat: "2006-01-02 15:04:05",
-FullTimestamp:   true,
+// 给指定用户推送消息
+c.SendToUser(userId, "message.notify", map[string]interface{}{
+    "content": "您有新的消息",
 })
 
-// 输出日志
-log.Debug("调试日志")
-log.Info("信息日志")
-log.Warn("警告日志")
-log.Error("错误日志")
+// 给指定连接推送消息
+c.SendToConnID(connID, "message.notify", data)
 ```
 
-## 5.3 框架扩展
+### Q4：如何配置数据库连接池？
 
-框架支持自定义扩展，可通过注册钩子、替换默认实现等方式扩展核心能力：
+在 `config/database.json` 中配置：
 
-- 配置钩子：RegisterHook 用于扩展配置读取逻辑
+```json
+{
+  "mysql": {
+    "default": {
+      "max_open_conn_num": 100,
+      "max_idle_conn_num": 20,
+      "conn_max_lifetime": 3600
+    }
+  }
+}
+```
 
-- 数据库驱动扩展：通过 database.RegisterDriver 注册自定义数据库驱动
+框架会根据 CPU 核数自动设置默认值：
 
-- 中间件扩展：自定义中间件实现特定业务需求（如链路追踪、监控等）
+- `MaxOpenConnNum` 默认：CPU 核数 × 3
+- `MaxIdleConnNum` 默认：CPU 核数 × 2
+- `ConnMaxIdleTime` 默认：300 秒
+- `ConnMaxLifetime` 默认：1800 秒
 
-# 6. 常见问题与解决方案
+### Q5：如何实现优雅停机？
 
-## 6.1 环境依赖问题
+框架内置信号监听（SIGINT/SIGTERM），停机流程：
 
-Q：安装框架后启动失败，提示Go版本过低？
-A：请升级Go版本至1.24及以上，框架部分特性依赖Go 1.24的新API。
+1. 接收到停机信号
+2. 执行业务层清理逻辑（`ShutdownFunc`）
+3. 关闭数据库连接
+4. 停止 HTTP/WebSocket/gRPC 服务
 
-## 6.2 数据库连接问题
+```go
+bootCfg := &bootstrap.BootConfig{
+    // ...
+    ShutdownFunc: func() {
+        // 业务层清理逻辑
+        logger.NewService().Stop()
+    },
+}
+```
 
-Q：无法连接数据库，提示认证失败？
-A：检查config/database.json中的数据库配置（地址、端口、用户名、密码）是否正确，确保数据库服务正常运行且网络可通。
+### Q6：如何实现跨库查询（MongoDB）？
 
-## 6.3 gRPC代码生成问题
+使用 `SetDbName` 和 `SetTablePre` 动态切换数据库：
 
-Q：执行protoc命令生成代码失败？
-A：请确保已正确安装Protobuf编译器（protoc）和Go语言插件（protoc-gen-go、protoc-gen-go-grpc），并将插件添加到系统环境变量中。
+```go
+mgDb.SetDbName("gczb_new").
+    SetTablePre("").
+    SetTable("member").
+    SetWhere(bson.D{{"_id", objectId}}).
+    Find(ctx)
+```
 
-## 6.4 多协议服务端口冲突
+### Q7：如何实现分布式锁？
 
-Q：同时启动HTTP和WS服务时提示端口被占用？
-A：修改config/app.json中http和ws的port配置，确保不同服务使用不同端口。
+使用 Redis 的 `SetNX`：
 
-# 7. 贡献与反馈
+```go
+redisDb, _ := m.GetRedis("default")
+cacheKey := redisDb.DbPre + "pay_order_" + orderNo
+ok, err := redisDb.Db.SetNX(ctx, cacheKey+"_lock", 1, 2*time.Second).Result()
+if !ok {
+    return errors.New("请不要频繁提交")
+}
+defer func() {
+    redisDb.Db.Del(ctx, cacheKey+"_lock")
+}()
+```
 
-- GitHub仓库：[https://github.com/dfpopp/go-dai](https://github.com/dfpopp/go-dai)（示例地址，需替换为实际仓库）
+### Q8：如何自定义响应格式？
 
-- Issue提交：如遇bug或需求，可在GitHub仓库提交Issue
+应用层可继承 `BaseController` 后重写 `Success`/`Error` 方法：
 
-- 贡献代码：欢迎Fork仓库，提交Pull Request参与框架开发
+```go
+type Common struct {
+    *base.BaseController
+}
 
-- 交流群：XXX（可添加框架作者获取交流群信息）
+func (c *Common) Success(data interface{}, msg ...string) {
+    message := "操作成功"
+    if len(msg) > 0 && msg[0] != "" {
+        message = msg[0]
+    }
+    ctx, err := c.GetCtx()
+    if err != nil {
+        c.LogError(err)
+        return
+    }
+    ctx.JSON(200, map[string]interface{}{
+        "status": 1,
+        "msg":    message,
+        "data":   data,
+    })
+}
+```
 
-# 8. 许可证
+---
 
-本框架采用 MIT 开源许可证，允许自由使用、修改和分发，详情见LICENSE文件。
-> （注：文档部分内容可能由 AI 生成）
+## 文档资源
+
+- **框架开发者手册**：[框架开发者手册.md](file:///d:/golang/project/go-Dai/框架开发者手册.md) - 完整的开发指南，包含框架介绍、核心模块详解、开发指南、最佳实践等
+- **代码规范文档**：[代码规范文档.md](file:///d:/golang/project/go-Dai/代码规范文档.md) - 详细的代码规范，包含命名规范、分层规范、数据库操作规范等
+- **代码规范文档 2.0**：[代码规范文档_v2.0.md](file:///d:/golang/project/go-Dai/代码规范文档_v2.0.md) - 基于落地应用实践升级的代码规范，补充更多实战示例
+
+---
+
+## License
+
+MIT License

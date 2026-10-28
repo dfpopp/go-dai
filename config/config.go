@@ -69,10 +69,12 @@ type GlobalAppConfig struct {
 
 // DatabaseConfig 数据库配置
 type DatabaseConfig struct {
-	MySQL   map[string]MySQLConfig   `json:"mysql"`
-	Mongodb map[string]MongodbConfig `json:"mongodb"`
-	Redis   map[string]RedisConfig   `json:"redis"`
-	Es      map[string]EsConfig      `json:"es"`
+	MySQL      map[string]MySQLConfig      `json:"mysql"`
+	Mongodb    map[string]MongodbConfig    `json:"mongodb"`
+	Redis      map[string]RedisConfig      `json:"redis"`
+	Es         map[string]EsConfig         `json:"es"`
+	Postgresql map[string]PostgresqlConfig `json:"postgresql"`
+	Clickhouse map[string]ClickhouseConfig `json:"clickhouse"`
 }
 
 // MySQLConfig MySQL连接配置
@@ -83,6 +85,43 @@ type MySQLConfig struct {
 	Pwd             string `json:"pwd"`
 	Dbname          string `json:"dbname"`
 	Charset         string `json:"charset"`
+	Pre             string `json:"pre"`
+	MaxOpenConnNum  int    `json:"max_open_conn_num"`
+	MaxIdleConnNum  int    `json:"max_idle_conn_num"`
+	ConnMaxIdleTime int    `json:"conn_max_idleTime"`
+	ConnMaxLifetime int    `json:"conn_max_lifetime"`
+	// 连接超时参数（秒）：timeout拨号/readTimeout读/writeTimeout写，应对主备切换等端点级故障
+	ConnectTimeout int `json:"connect_timeout"` // 拨号超时，默认5；保证fail fast让重试有意义
+	ReadTimeout    int `json:"read_timeout"`    // 读超时，默认30；必须≥业务最长查询的ctx超时，否则误杀慢查询
+	WriteTimeout   int `json:"write_timeout"`   // 写超时，默认30；同上
+	// 连接类瞬时错误退避重试：仅非事务路径生效，默认只重试「确定未执行」的错误（拨号失败、ErrBadConn）
+	RetryMaxAttempts   int  `json:"retry_max_attempts"`    // 最大尝试次数（含首次），默认3
+	RetryBackoffMs     int  `json:"retry_backoff_ms"`      // 退避基数（毫秒），指数递增100ms→200ms→400ms，默认100
+	RetryOnInvalidConn bool `json:"retry_on_invalid_conn"` // 额外重试「结果未知」错误（ErrInvalidConn等），调用方必须保证操作幂等，默认false
+}
+
+// PostgresqlConfig PostgreSQL连接配置
+type PostgresqlConfig struct {
+	Host            string `json:"host"`
+	Port            string `json:"port"`
+	User            string `json:"user"`
+	Pwd             string `json:"pwd"`
+	Dbname          string `json:"dbname"`
+	Pre             string `json:"pre"`
+	SslMode         string `json:"ssl_mode"` // SSL模式（disable/require/verify-ca/verify-full），默认disable
+	MaxOpenConnNum  int    `json:"max_open_conn_num"`
+	MaxIdleConnNum  int    `json:"max_idle_conn_num"`
+	ConnMaxIdleTime int    `json:"conn_max_idleTime"`
+	ConnMaxLifetime int    `json:"conn_max_lifetime"`
+}
+
+// ClickhouseConfig ClickHouse连接配置
+type ClickhouseConfig struct {
+	Host            string `json:"host"`
+	Port            string `json:"port"`
+	User            string `json:"user"`
+	Pwd             string `json:"pwd"`
+	Dbname          string `json:"dbname"`
 	Pre             string `json:"pre"`
 	MaxOpenConnNum  int    `json:"max_open_conn_num"`
 	MaxIdleConnNum  int    `json:"max_idle_conn_num"`

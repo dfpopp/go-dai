@@ -9,27 +9,30 @@ import (
 type BoolClauseType string
 
 type ESDb struct {
-	Client        *elasticsearch.Client // 复用全局数据库连接池
-	DbPre         string                //表前缀
-	GzipStatus    bool                  //响应内容是否开启gzip压缩
-	Index         []string
-	Id            string
-	WhereQuery    map[string]interface{} // 查询条件（DSL）
-	Aggs          map[string]interface{} // 聚合配置
-	Sort          []string
-	ExcludeSource []string
-	Source        []string
-	ScriptFields  map[string]interface{}
-	From          int64
-	Size          int64
-	Highlight     map[string]interface{}
-	Pk            string // 批量操作的主键字段（如"id"）
-	BatchTimeout  int    //批量操作超时设置
-	BulkActions   []string
-	Data          []map[string]interface{}
-	AggsData      map[string]interface{} // 新增：专存聚合结果
-	TotalCount    int64
-	Err           error
+	Client         *elasticsearch.Client  // 复用全局数据库连接池
+	DbPre          string                 //表前缀
+	GzipStatus     bool                   //响应内容是否开启gzip压缩
+	Index          []string
+	Id             string
+	WhereQuery     map[string]interface{} // 查询条件（DSL）
+	Aggs           map[string]interface{} // 聚合配置
+	Sort           []string
+	ExcludeSource  []string
+	Source         []string
+	ScriptFields   map[string]interface{}
+	From           int64
+	Size           int64
+	Highlight      map[string]interface{}
+	Pk             string // 批量操作的主键字段（如"id"）
+	BatchTimeout   int    //批量操作超时设置
+	BulkActions    []string
+	Data           []map[string]interface{}
+	AggsData       map[string]interface{} // 新增：专存聚合结果
+	TotalCount     int64
+	Collapse       string                 // 去重折叠字段（字段值相同的文档仅保留一条）
+	TrackTotalHits bool                   // 是否精确统计总命中数（ES 7+默认上限1万）
+	SearchTimeout  int                    // 服务端查询超时（秒），超时返回已查到的部分结果
+	Err            error
 }
 type DbObj struct {
 	Client     *elasticsearch.Client // 复用全局数据库连接池

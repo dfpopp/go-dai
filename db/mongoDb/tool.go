@@ -3,8 +3,7 @@ package mongoDb
 import (
 	"fmt"
 
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 // GetData 返回原始查询结果
@@ -15,17 +14,17 @@ func (m *Db) GetData() ([]map[string]interface{}, error) {
 	return m.Data, nil
 }
 
-// IdToObjectID 字符串转ObjectID
-func IdToObjectID(id string) (primitive.ObjectID, error) {
-	oid, err := primitive.ObjectIDFromHex(id)
+// IdToObjectID 字符串转ObjectID（v2起ObjectID在bson包，不再有primitive子包）
+func IdToObjectID(id string) (bson.ObjectID, error) {
+	oid, err := bson.ObjectIDFromHex(id)
 	if err != nil {
-		return primitive.NilObjectID, fmt.Errorf("转换ObjectID失败: %v", err)
+		return bson.NilObjectID, fmt.Errorf("转换ObjectID失败: %v", err)
 	}
 	return oid, nil
 }
 
 // ObjectIDToString ObjectID转字符串
-func ObjectIDToString(oid primitive.ObjectID) string {
+func ObjectIDToString(oid bson.ObjectID) string {
 	return oid.Hex()
 }
 func MapToBsonD(sdata map[string]interface{}) bson.D {

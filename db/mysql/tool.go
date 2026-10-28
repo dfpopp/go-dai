@@ -59,6 +59,12 @@ var validOrderRegex = regexp.MustCompile(`^(?:` +
 	")(?:,\\s*(?:`?[a-zA-Z_][a-zA-Z0-9_]*`?(?:\\.`?[a-zA-Z_][a-zA-Z0-9_]*`?)*" +
 	"(?:\\s+(?:asc|ASC|desc|DESC))?)?)*$")
 var validGroupRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?(,\s*[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?)*$`)
+// 函数分组形态：函数名(标识符参数列表)，可带 AS 别名，如 arrayJoin(zbhx) AS zbhx
+var validGroupFuncRegex = regexp.MustCompile(`(?i)^[a-zA-Z_][a-zA-Z0-9_]*\(\s*[a-zA-Z_][a-zA-Z0-9_.]*(\s*,\s*[a-zA-Z_][a-zA-Z0-9_.]*)*\s*\)(\s+AS\s+[a-zA-Z_][a-zA-Z0-9_]*)?$`)
+// 聚合函数内的星号整体形态：COUNT(*)/SUM(*)/AVG(*)/MIN(*)/MAX(*)，用于isValidField放行
+var aggStarRegex = regexp.MustCompile(`(?i)\b(COUNT|SUM|AVG|MIN|MAX)\(\s*\*\s*\)`)
+// SetWhere危险关键字：词边界匹配，避免update_time/deleted等字段名被子串误伤（UPDATE_TIME、DELETED放行，UPDATE/DELETE语句拦截）
+var dangerousKeywordsRe = regexp.MustCompile(`(?i)\b(DROP|ALTER|TRUNCATE|DELETE|INSERT|UPDATE|EXEC(UTE)?)\b`)
 var validIncRegex = regexp.MustCompile(`^[a-zA-Z0-9_=?+\-\s]+(\.[a-zA-Z0-9_=?+\-\s]+)?$`)
 
 // 校验表名（防止注入）
@@ -85,6 +91,8 @@ func isValidField(s string) bool {
 		if f == "" {
 			continue
 		}
+		// 聚合函数内的星号（如COUNT(*)）先替换为占位，再走常规校验；其余位置的星号仍被拦截
+		f = aggStarRegex.ReplaceAllString(f, "${1}(1)")
 		if validFieldRegex.MatchString(f) {
 			return false
 		}
@@ -122,8 +130,8 @@ func isValidGroup(s string) bool {
 	}
 	s = regexp.MustCompile(`\s+`).ReplaceAllString(s, " ")
 	s = strings.TrimSpace(s)
-	// 正则校验
-	return validGroupRegex.MatchString(s)
+	// 普通字段分组，或函数分组（如arrayJoin(zbhx) AS zbhx）
+	return validGroupRegex.MatchString(s) || validGroupFuncRegex.MatchString(s)
 }
 
 // 校验表名/字段名是否为合法标识符（防止注入）

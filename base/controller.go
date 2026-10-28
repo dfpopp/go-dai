@@ -557,11 +557,21 @@ func (c *BaseController) Success(data interface{}, msg ...string) {
 		"msg":  "操作成功",
 		"data": data,
 	}))
-	grCtx.ctx.JSON(200, map[string]interface{}{
-		"code": 200,
-		"msg":  message,
-		"data": data,
-	})
+	requestId, _ := grCtx.ctx.Get("request_id")
+	if requestId != nil {
+		grCtx.ctx.JSON(200, map[string]interface{}{
+			"code":       200,
+			"msg":        message,
+			"data":       data,
+			"request_id": requestId,
+		})
+	} else {
+		grCtx.ctx.JSON(200, map[string]interface{}{
+			"code": 200,
+			"msg":  message,
+			"data": data,
+		})
+	}
 }
 
 // DataSuccess 统一成功响应（JSON格式）
@@ -581,12 +591,23 @@ func (c *BaseController) DataSuccess(data interface{}, count int64) {
 		"data":  data,
 		"count": count,
 	}))
-	grCtx.ctx.JSON(200, map[string]interface{}{
-		"code":  200,
-		"msg":   "操作成功",
-		"data":  data,
-		"count": count,
-	})
+	requestId, _ := grCtx.ctx.Get("request_id")
+	if requestId != nil {
+		grCtx.ctx.JSON(200, map[string]interface{}{
+			"code":       200,
+			"msg":        "操作成功",
+			"data":       data,
+			"count":      count,
+			"request_id": requestId,
+		})
+	} else {
+		grCtx.ctx.JSON(200, map[string]interface{}{
+			"code":  200,
+			"msg":   "操作成功",
+			"data":  data,
+			"count": count,
+		})
+	}
 }
 
 // Error 统一失败响应（JSON格式）
@@ -606,11 +627,21 @@ func (c *BaseController) Error(code int, msg string) {
 	}
 	grCtx.ctx.Set("resultCode", code)
 	grCtx.ctx.Set("resultMsg", msg)
-	grCtx.ctx.JSON(200, map[string]interface{}{
-		"code": code,
-		"msg":  msg,
-		"data": nil,
-	})
+	requestId, _ := grCtx.ctx.Get("request_id")
+	if requestId != nil {
+		grCtx.ctx.JSON(200, map[string]interface{}{
+			"code":       code,
+			"msg":        msg,
+			"data":       nil,
+			"request_id": requestId,
+		})
+	} else {
+		grCtx.ctx.JSON(200, map[string]interface{}{
+			"code": code,
+			"msg":  msg,
+			"data": nil,
+		})
+	}
 }
 
 // RespText 统一响应（字符串格式）

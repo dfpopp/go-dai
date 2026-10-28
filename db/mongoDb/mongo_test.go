@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 // TestGetMongoDB 测试获取MongoDB连接
@@ -24,23 +24,25 @@ func TestGetMongoDB(t *testing.T) {
 func TestDb_Methods(t *testing.T) {
 	// 创建测试数据库连接（这里我们不实际连接数据库，只测试方法调用）
 	testDb := &Db{
-		Client:        nil,
-		Db:            nil,
-		DbPre:         "test_",
-		TxSession:     nil,
-		Collection:    "",
-		Filter:        nil,
-		AggregatePipe: nil,
-		FindOptions:   options.Find(),
-		DeleteOptions: options.Delete(),
-		UpdateOptions: options.Update(),
-		InsertOptions: options.InsertMany(),
-		Sort:          nil,
-		Skip:          0,
-		Limit:         0,
-		Projection:    nil,
-		Data:          nil,
-		Err:           nil,
+		Client:           nil,
+		Db:               nil,
+		DbPre:            "test_",
+		TxSession:        nil,
+		Collection:       "",
+		Filter:           nil,
+		AggregatePipe:    nil,
+		FindOptions:      options.Find(),
+		DeleteOptions:    options.DeleteMany(),
+		DeleteOneOptions: options.DeleteOne(),
+		UpdateOptions:    options.UpdateMany(),
+		UpdateOneOptions: options.UpdateOne(),
+		InsertOptions:    options.InsertMany(),
+		Sort:             nil,
+		Skip:             0,
+		Limit:            0,
+		Projection:       nil,
+		Data:             nil,
+		Err:              nil,
 	}
 
 	// 测试设置方法（只测试不会修改Client/Db的方法）
@@ -53,7 +55,7 @@ func TestDb_Methods(t *testing.T) {
 	testDb = testDb.SetProjection(bson.D{{Key: "_id", Value: 1}, {Key: "name", Value: 1}})
 	testDb = testDb.SetInsertOrdered(true)
 	testDb = testDb.SetUpdateUpsert(true)
-	testDb = testDb.SetUpdateArrayFilters(options.ArrayFilters{})
+	testDb = testDb.SetUpdateArrayFilters([]interface{}{})
 	testDb = testDb.SetDeleteHint("_id_1")
 
 	// 测试事务方法

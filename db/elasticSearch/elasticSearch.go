@@ -222,25 +222,30 @@ func GetEsDB(dbKey string) (*ESDb, error) {
 		return nil, fmt.Errorf("数据库[%s]连接池类型错误", dbKey)
 	}
 	return &ESDb{
-		Client:        dbObj.Client,
-		DbPre:         dbObj.Pre,
-		GzipStatus:    dbObj.GzipStatus,
-		Index:         []string{},
-		Id:            "",
-		WhereQuery:    nil,
-		Aggs:          nil,
-		Sort:          []string{},
-		ExcludeSource: []string{},
-		Source:        []string{},
-		ScriptFields:  nil,
-		From:          int64(0),
-		Size:          int64(0),
-		Highlight:     nil,
-		Pk:            "",
-		BatchTimeout:  0,
-		BulkActions:   nil,
-		Data:          nil,
-		Err:           nil,
+		Client:         dbObj.Client,
+		DbPre:          dbObj.Pre,
+		GzipStatus:     dbObj.GzipStatus,
+		Index:          []string{},
+		Id:             "",
+		WhereQuery:     nil,
+		Aggs:           nil,
+		Sort:           []string{},
+		ExcludeSource:  []string{},
+		Source:         []string{},
+		ScriptFields:   nil,
+		From:           int64(0),
+		Size:           int64(0),
+		Highlight:      nil,
+		Pk:             "",
+		BatchTimeout:   0,
+		BulkActions:    nil,
+		Data:           nil,
+		AggsData:       nil,
+		TotalCount:     0,
+		Collapse:       "",
+		TrackTotalHits: false,
+		SearchTimeout:  0,
+		Err:            nil,
 	}, nil
 }
 func (db *ESDb) SetIndex(tables string) *ESDb {
@@ -451,11 +456,16 @@ func (db *ESDb) SetSort(sort ...string) *ESDb {
 	}
 	for _, s := range sort {
 		parts := strings.Split(s, ":")
-		if len(parts) != 2 || (parts[1] != "asc" && parts[1] != "desc") {
-			db.Err = fmt.Errorf("排序格式错误[%s]，正确格式：字段名:asc/desc", s)
+		if len(parts) > 2 {
+			db.Err = fmt.Errorf("排序字段[%s]非法", parts[0])
 			return db
 		}
-		if !validIdentifierRegex.MatchString(parts[0]) {
+		if len(parts) == 2 {
+			if parts[1] != "asc" && parts[1] != "desc" {
+				db.Err = fmt.Errorf("排序格式错误[%s]，正确格式：字段名:asc/desc", s)
+				return db
+			}
+		} else if !validIdentifierRegex.MatchString(parts[0]) {
 			db.Err = fmt.Errorf("排序字段[%s]非法", parts[0])
 			return db
 		}
@@ -623,6 +633,42 @@ func (db *ESDb) SetAggs(aggName, aggType, field string) *ESDb {
 	return db
 }
 
+// SetCollapse 设置去重折叠字段（字段值相同的文档仅保留排序最前的一条，用于列表去重）
+// 示例：SetCollapse("cid")
+func (db *ESDb) SetCollapse(field string) *ESDb {
+	if db.Err != nil {
+		return db
+	}
+	if !validIdentifierRegex.MatchString(field) {
+		db.Err = fmt.Errorf("collapse字段非法：%s", field)
+		return db
+	}
+	db.Collapse = field
+	return db
+}
+
+// SetTrackTotalHits 开启精确总命中数统计（ES 7+默认track_total_hits上限1万，超过后hits.total.value不精确）
+func (db *ESDb) SetTrackTotalHits() *ESDb {
+	if db.Err != nil {
+		return db
+	}
+	db.TrackTotalHits = true
+	return db
+}
+
+// SetSearchTimeout 设置服务端查询超时（秒），超时后ES返回已查到的部分结果（timed_out=true），不报错
+func (db *ESDb) SetSearchTimeout(seconds int) *ESDb {
+	if db.Err != nil {
+		return db
+	}
+	if seconds <= 0 {
+		db.Err = errors.New("查询超时时间必须大于0秒")
+		return db
+	}
+	db.SearchTimeout = seconds
+	return db
+}
+
 // ===================== 核心操作方法 =====================
 
 // FindAll 执行查询（对标MySQL的FindAll）
@@ -687,7 +733,14 @@ func (db *ESDb) FindAll(ctx context.Context) *ESDb {
 	if len(db.Aggs) > 0 {
 		queryDSL["aggs"] = db.Aggs
 	}
-
+	// 去重折叠
+	if db.Collapse != "" {
+		queryDSL["collapse"] = map[string]string{"field": db.Collapse}
+	}
+	// 精确总命中数
+	if db.TrackTotalHits {
+		queryDSL["track_total_hits"] = true
+	}
 	// 2. 序列化DSL
 	queryBytes, err := json.Marshal(queryDSL)
 	if err != nil {
@@ -699,6 +752,10 @@ func (db *ESDb) FindAll(ctx context.Context) *ESDb {
 		Index:  db.Index,
 		Body:   strings.NewReader(string(queryBytes)),
 		Pretty: true,
+	}
+	// 服务端查询超时（慢查询优雅降级，超时返回已查到的部分结果）
+	if db.SearchTimeout > 0 {
+		req.Timeout = time.Duration(db.SearchTimeout) * time.Second
 	}
 	res, err := req.Do(ctx, db.Client)
 	if err != nil {
@@ -792,6 +849,7 @@ func (db *ESDb) FindAll(ctx context.Context) *ESDb {
 	if hasAggs {
 		if aggs, ok := aggsVal.(map[string]interface{}); ok {
 			db.AggsData = aggs
+			return db
 		} else {
 			db.Err = errors.New("ES响应aggregations字段类型错误")
 			return db
@@ -2308,6 +2366,9 @@ func (db *ESDb) clearData(isClearTx bool) {
 	db.Data = nil
 	db.AggsData = nil
 	db.TotalCount = int64(0)
+	db.Collapse = ""
+	db.TrackTotalHits = false
+	db.SearchTimeout = 0
 	db.Err = nil
 	if isClearTx {
 		db.BulkActions = nil

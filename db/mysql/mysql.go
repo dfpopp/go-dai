@@ -3,19 +3,22 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
-	"github.com/dfpopp/go-dai/config"
-	"github.com/dfpopp/go-dai/function"
-	"github.com/dfpopp/go-dai/logger"
 	"math"
+	"net"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/dfpopp/go-dai/config"
+	"github.com/dfpopp/go-dai/function"
+	"github.com/dfpopp/go-dai/logger"
+
+	mysqldrv "github.com/go-sql-driver/mysql"
 )
 
 // 该文件为mysql基本操作类，支持链式操作，在执行findAll()后必须调用ToString()才能返回想要的结果和错误信息
@@ -35,13 +38,30 @@ type MysqlDb struct {
 	Field          string
 	RelationList   []string
 	Limit          string
+	UpsertCols     []string // 唯一键冲突时更新的列（SetUpsert设置，Insert/InsertAll生成ON DUPLICATE KEY UPDATE）
 	Data           []map[string]interface{}
 	Err            error
+	// 连接类瞬时错误重试配置（连接池创建时从database.json读取，0/false走默认值）
+	RetryMaxAttempts   int  // 最大尝试次数（含首次），默认3；事务路径不重试
+	RetryBackoffMs     int  // 退避基数（毫秒），指数递增，默认100
+	RetryOnInvalidConn bool // 是否重试「结果未知」错误，须调用方保证操作幂等，默认false
 }
 type DbObj struct {
-	Db  *sql.DB // 复用全局数据库连接池
-	Pre string
+	Db                 *sql.DB // 复用全局数据库连接池
+	Pre                string
+	RetryMaxAttempts   int
+	RetryBackoffMs     int
+	RetryOnInvalidConn bool
 }
+
+// 连接超时与重试默认值（database.json未配置时生效）
+const (
+	defaultConnectTimeout = 5   // 拨号超时（秒）：内网正常<1ms，5s不误伤且保证fail fast让重试有意义
+	defaultReadTimeout    = 30  // 读超时（秒）：必须≥业务最长查询的ctx超时，否则误杀慢查询
+	defaultWriteTimeout   = 30  // 写超时（秒）：同上
+	defaultRetryAttempts  = 3   // 最大尝试次数（含首次），退避总预算300ms（100+200）
+	defaultRetryBackoffMs = 100 // 退避基数（毫秒），指数递增100→200→400
+)
 
 // InitMySQL 初始化MySQL连接池
 func InitMySQL() {
@@ -105,7 +125,20 @@ func reinitMySQLConnections() error {
 
 // createMySQLConnection 创建MySQL连接
 func createMySQLConnection(dbKey string, cfg config.MySQLConfig) {
-	db, err := sql.Open("mysql", cfg.User+":"+cfg.Pwd+"@tcp("+cfg.Host+":"+cfg.Port+")/"+cfg.Dbname+"?charset="+cfg.Charset)
+	// 超时参数默认值：timeout应对VIP黑洞（丢包不拒绝）导致拨号挂死；read/write超时须≥业务最长查询ctx超时
+	if cfg.ConnectTimeout <= 0 {
+		cfg.ConnectTimeout = defaultConnectTimeout
+	}
+	if cfg.ReadTimeout <= 0 {
+		cfg.ReadTimeout = defaultReadTimeout
+	}
+	if cfg.WriteTimeout <= 0 {
+		cfg.WriteTimeout = defaultWriteTimeout
+	}
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=%s&timeout=%ds&readTimeout=%ds&writeTimeout=%ds",
+		cfg.User, cfg.Pwd, cfg.Host, cfg.Port, cfg.Dbname, cfg.Charset,
+		cfg.ConnectTimeout, cfg.ReadTimeout, cfg.WriteTimeout)
+	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		logger.Error("MySQL连接失败: " + err.Error())
 	} else {
@@ -131,8 +164,14 @@ func createMySQLConnection(dbKey string, cfg config.MySQLConfig) {
 		if err := db.Ping(); err != nil {
 			logger.Error("MySQL Ping失败: " + err.Error())
 		} else {
-			// 存储新连接
-			multiDBPool.Store(dbKey, DbObj{Db: db, Pre: cfg.Pre})
+			// 存储新连接（携带重试配置）
+			multiDBPool.Store(dbKey, DbObj{
+				Db:                 db,
+				Pre:                cfg.Pre,
+				RetryMaxAttempts:   cfg.RetryMaxAttempts,
+				RetryBackoffMs:     cfg.RetryBackoffMs,
+				RetryOnInvalidConn: cfg.RetryOnInvalidConn,
+			})
 			logger.Info("MySQL连接成功:", "dbKey", dbKey)
 		}
 	}
@@ -149,21 +188,117 @@ func GetMysqlDB(dbKey string) (*MysqlDb, error) {
 		return nil, fmt.Errorf("数据库[%s]连接池类型错误", dbKey)
 	}
 	return &MysqlDb{
-		Db:             dbObj.Db,
-		Tx:             nil,
-		DbPre:          dbObj.Pre,
-		Table:          "",
-		Alias:          "",
-		WhereTemplates: nil,
-		WhereArgs:      nil,
-		Order:          "",
-		Group:          "",
-		Field:          "",
-		RelationList:   nil,
-		Limit:          "",
-		Data:           nil,
-		Err:            nil,
+		Db:                 dbObj.Db,
+		Tx:                 nil,
+		DbPre:              dbObj.Pre,
+		Table:              "",
+		Alias:              "",
+		WhereTemplates:     nil,
+		WhereArgs:          nil,
+		Order:              "",
+		Group:              "",
+		Field:              "",
+		RelationList:       nil,
+		Limit:              "",
+		UpsertCols:         nil,
+		Data:               nil,
+		Err:                nil,
+		RetryMaxAttempts:   dbObj.RetryMaxAttempts,
+		RetryBackoffMs:     dbObj.RetryBackoffMs,
+		RetryOnInvalidConn: dbObj.RetryOnInvalidConn,
 	}, nil
+}
+
+// isRetryableConnErr 判断错误是否为可重试的连接类瞬时错误
+// allowUnknownResult=false仅重试「确定未执行」的错误，对任何操作（含增量写）安全；
+// true时额外重试「已发出、结果未知」的错误，调用方必须保证操作幂等（禁止用于cnt=cnt+?等增量写）
+func isRetryableConnErr(err error, allowUnknownResult bool) bool {
+	if err == nil {
+		return false
+	}
+	// driver.ErrBadConn：一个字节都没发出（驱动markBadConn注释明确safe to retry），database/sql内置重试耗尽后才到这里
+	if errors.Is(err, driver.ErrBadConn) {
+		return true
+	}
+	// 拨号阶段失败（连接未建立，必然未执行）：connection refused / i/o timeout / no route to host / no such host 等
+	var opErr *net.OpError
+	if errors.As(err, &opErr) && opErr.Op == "dial" {
+		return true
+	}
+	if !allowUnknownResult {
+		return false
+	}
+	// 以下为「请求已发出、响应未知」类错误，仅幂等操作可重试
+	if errors.Is(err, mysqldrv.ErrInvalidConn) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	keywords := []string{"connection reset by peer", "broken pipe", "unexpected eof", "i/o timeout"}
+	for _, kw := range keywords {
+		if strings.Contains(msg, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// withRetry 带指数退避重试执行fn，仅针对连接类瞬时错误；事务路径不得进入（部分语句已执行的语义无法保证）
+func (db *MysqlDb) withRetry(ctx context.Context, fn func() error) error {
+	attempts := db.RetryMaxAttempts
+	if attempts <= 0 {
+		attempts = defaultRetryAttempts
+	}
+	backoff := time.Duration(db.RetryBackoffMs) * time.Millisecond
+	if backoff <= 0 {
+		backoff = defaultRetryBackoffMs * time.Millisecond
+	}
+	var err error
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			logger.Warn("MySQL连接类瞬时错误，退避重试:", "attempt", i, "backoff", backoff.String(), "error", err.Error())
+			timer := time.NewTimer(backoff)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+			backoff *= 2 // 指数退避：100ms→200ms→400ms
+		}
+		err = fn()
+		if err == nil || !isRetryableConnErr(err, db.RetryOnInvalidConn) {
+			return err
+		}
+	}
+	return err
+}
+
+// execContextRetry 执行Exec：事务路径直接透传不重试；非事务路径按配置带指数退避重试连接类瞬时错误
+func (db *MysqlDb) execContextRetry(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	if db.Tx != nil {
+		return db.Tx.ExecContext(ctx, query, args...)
+	}
+	var result sql.Result
+	err := db.withRetry(ctx, func() error {
+		var execErr error
+		result, execErr = db.Db.ExecContext(ctx, query, args...)
+		return execErr
+	})
+	return result, err
+}
+
+// queryContextRetry 执行Query：事务路径直接透传不重试；非事务路径按配置带指数退避重试连接类瞬时错误
+func (db *MysqlDb) queryContextRetry(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	if db.Tx != nil {
+		return db.Tx.QueryContext(ctx, query, args...)
+	}
+	var rows *sql.Rows
+	err := db.withRetry(ctx, func() error {
+		var queryErr error
+		rows, queryErr = db.Db.QueryContext(ctx, query, args...)
+		return queryErr
+	})
+	return rows, err
 }
 func (db *MysqlDb) ToBegin() error {
 	if db.Err != nil {
@@ -225,13 +360,10 @@ func (db *MysqlDb) SetWhere(tpl string, args ...interface{}) *MysqlDb {
 		return db
 	}
 
-	// 非法关键字拦截（可选，增强安全，防止恶意注入）
-	dangerousKeywords := []string{"DROP", "ALTER", "TRUNCATE", "DELETE", "INSERT", "UPDATE", "EXEC"}
-	for _, kw := range dangerousKeywords {
-		if strings.Contains(strings.ToUpper(tpl), kw) {
-			db.Err = fmt.Errorf("条件模板包含非法关键字：%s", kw)
-			return db
-		}
+	// 非法关键字拦截（词边界匹配，避免update_time/deleted等字段名被子串误伤）
+	if kw := dangerousKeywordsRe.FindString(tpl); kw != "" {
+		db.Err = fmt.Errorf("条件模板包含非法关键字：%s", strings.ToUpper(kw))
+		return db
 	}
 	// 将模板和参数加入列表
 	db.WhereTemplates = append(db.WhereTemplates, tpl)
@@ -300,8 +432,8 @@ func (db *MysqlDb) SetLimit(skip int64, num int64) *MysqlDb {
 	if num < 0 {
 		num = 0
 	}
-	if num > 1000 {
-		num = 1000
+	if num > 10000 {
+		num = 10000
 	}
 	if skip == 0 {
 		db.Limit = strconv.FormatInt(num, 10)
@@ -462,13 +594,7 @@ func (db *MysqlDb) FindAll(ctx context.Context) *MysqlDb {
 	} else {
 		sqlStr += " LIMIT 500"
 	}
-	var rows *sql.Rows
-	var err error
-	if db.Tx != nil {
-		rows, err = db.Tx.QueryContext(ctx, sqlStr, db.WhereArgs...)
-	} else {
-		rows, err = db.Db.QueryContext(ctx, sqlStr, db.WhereArgs...)
-	}
+	rows, err := db.queryContextRetry(ctx, sqlStr, db.WhereArgs...)
 	if err != nil {
 		db.Err = fmt.Errorf("SQL语句:%s，values:%s,查询失败，失败原因[%s]", sqlStr, function.Json_encode(db.WhereArgs), err.Error())
 		return db
@@ -585,6 +711,28 @@ func (db *MysqlDb) Find(ctx context.Context) (string, error) {
 	}
 	return "", nil
 }
+
+// SetUpsert 设置唯一键冲突时更新的列（配合Insert/InsertAll生成ON DUPLICATE KEY UPDATE，幂等upsert）
+// 冲突时将指定列更新为本次插入的对应值：Insert逐列取data值参数化，InsertAll逐行取本行值（VALUES(col)）
+// 示例：SetUpsert("uid", "product_id", "account").Insert(ctx, data)
+func (db *MysqlDb) SetUpsert(cols ...string) *MysqlDb {
+	if db.Err != nil {
+		return db
+	}
+	if len(cols) == 0 {
+		db.Err = errors.New("upsert更新列不能为空")
+		return db
+	}
+	for _, col := range cols {
+		col = strings.TrimSpace(col)
+		if col == "" || !isValidField(col) {
+			db.Err = fmt.Errorf("upsert列名[%s]非法，存在注入风险", col)
+			return db
+		}
+		db.UpsertCols = append(db.UpsertCols, col)
+	}
+	return db
+}
 func (db *MysqlDb) Insert(ctx context.Context, data map[string]interface{}) (int64, error) {
 	defer db.clearData(false)
 	if db.Db == nil {
@@ -616,15 +764,22 @@ func (db *MysqlDb) Insert(ctx context.Context, data map[string]interface{}) (int
 	fieldStr := strings.Join(fields, ", ")
 	placeholderStr := strings.Join(placeholders, ", ")
 	sqlStr := fmt.Sprintf("INSERT INTO `%s` (%s) VALUES (%s)", db.Table, fieldStr, placeholderStr)
-
-	// 执行SQL
-	var result sql.Result
-	var err error
-	if db.Tx != nil {
-		result, err = db.Tx.ExecContext(ctx, sqlStr, values...)
-	} else {
-		result, err = db.Db.ExecContext(ctx, sqlStr, values...)
+	// 拼接ON DUPLICATE KEY UPDATE段：`col` = ? 参数取data中对应值（全参数化，无拼接注入面）
+	if len(db.UpsertCols) > 0 {
+		var upsertFields []string
+		for _, col := range db.UpsertCols {
+			value, ok := data[col]
+			if !ok {
+				return 0, fmt.Errorf("upsert列[%s]不在插入数据中", col)
+			}
+			upsertFields = append(upsertFields, fmt.Sprintf("`%s` = ?", col))
+			values = append(values, value)
+		}
+		sqlStr += " ON DUPLICATE KEY UPDATE " + strings.Join(upsertFields, ", ")
 	}
+
+	// 执行SQL（非事务路径带退避重试）
+	result, err := db.execContextRetry(ctx, sqlStr, values...)
 	if err != nil {
 		return 0, fmt.Errorf("执行插入SQL失败，SQL：%s，values:%s,错误：%w", sqlStr, function.Json_encode(values), err)
 	}
@@ -703,15 +858,19 @@ func (db *MysqlDb) InsertAll(ctx context.Context, dataList []map[string]interfac
 	fieldStr := strings.Join(fields, ", ")
 	batchPlaceholderStr := strings.Join(batchPlaceholders, ", ")
 	sqlStr := fmt.Sprintf("INSERT INTO `%s` (%s) VALUES %s", db.Table, fieldStr, batchPlaceholderStr)
-	// 执行批量插入SQL
-	// 核心修正：提前声明result和err，解决作用域问题
-	var result sql.Result
-	var err error
-	if db.Tx != nil {
-		result, err = db.Tx.ExecContext(ctx, sqlStr, allValues...)
-	} else {
-		result, err = db.Db.ExecContext(ctx, sqlStr, allValues...)
+	// 拼接ON DUPLICATE KEY UPDATE段：VALUES(col)逐行取本行插入值（批量场景无法整体参数化；该写法MySQL 8.4起弃用但仍可用）
+	if len(db.UpsertCols) > 0 {
+		var upsertFields []string
+		for _, col := range db.UpsertCols {
+			if _, ok := firstData[col]; !ok {
+				return 0, fmt.Errorf("upsert列[%s]不在插入数据中", col)
+			}
+			upsertFields = append(upsertFields, fmt.Sprintf("`%s` = VALUES(`%s`)", col, col))
+		}
+		sqlStr += " ON DUPLICATE KEY UPDATE " + strings.Join(upsertFields, ", ")
 	}
+	// 执行批量插入SQL（非事务路径带退避重试）
+	result, err := db.execContextRetry(ctx, sqlStr, allValues...)
 	if err != nil {
 		return 0, fmt.Errorf("执行批量SQL失败，SQL：%s，values:%s,错误：%w", sqlStr, function.Json_encode(allValues), err)
 	}
@@ -761,14 +920,8 @@ func (db *MysqlDb) Update(ctx context.Context, data map[string]interface{}) (int
 			values = append(values, arg)
 		}
 	}
-	// 5. 执行SQL并处理错误
-	var result sql.Result
-	var err error
-	if db.Tx != nil {
-		result, err = db.Tx.ExecContext(ctx, sqlStr, values...)
-	} else {
-		result, err = db.Db.ExecContext(ctx, sqlStr, values...)
-	}
+	// 5. 执行SQL并处理错误（非事务路径带退避重试）
+	result, err := db.execContextRetry(ctx, sqlStr, values...)
 	if err != nil {
 		// 包装错误，保留原始错误链和SQL信息（便于调试）
 		return 0, fmt.Errorf("执行更新SQL失败，SQL：%s，values:%s,错误：%w", sqlStr, function.Json_encode(values), err)
@@ -806,14 +959,8 @@ func (db *MysqlDb) UpdateBySet(ctx context.Context, setTpl string, values ...int
 			values = append(values, arg)
 		}
 	}
-	// 5. 执行SQL并处理错误
-	var result sql.Result
-	var err error
-	if db.Tx != nil {
-		result, err = db.Tx.ExecContext(ctx, sqlStr, values...)
-	} else {
-		result, err = db.Db.ExecContext(ctx, sqlStr, values...)
-	}
+	// 5. 执行SQL并处理错误（非事务路径带退避重试）
+	result, err := db.execContextRetry(ctx, sqlStr, values...)
 	if err != nil {
 		// 包装错误，保留原始错误链和SQL信息（便于调试）
 		return 0, fmt.Errorf("执行更新SQL失败，SQL：%s，values:%s,错误：%w", sqlStr, function.Json_encode(values), err)
@@ -864,14 +1011,8 @@ func (db *MysqlDb) SetInc(ctx context.Context, tpl string, step ...interface{}) 
 			values = append(values, arg)
 		}
 	}
-	// 5. 执行SQL并处理错误
-	var result sql.Result
-	var err error
-	if db.Tx != nil {
-		result, err = db.Tx.ExecContext(ctx, sqlStr, values...)
-	} else {
-		result, err = db.Db.ExecContext(ctx, sqlStr, values...)
-	}
+	// 5. 执行SQL并处理错误（非事务路径带退避重试）
+	result, err := db.execContextRetry(ctx, sqlStr, values...)
 	if err != nil {
 		// 包装错误，保留原始错误链和SQL信息（便于调试）
 		return 0, fmt.Errorf("执行更新SQL失败，SQL：%s，values:%s,错误：%w", sqlStr, function.Json_encode(values), err)
@@ -911,13 +1052,7 @@ func (db *MysqlDb) Delete(ctx context.Context) (int64, error) {
 		// 校验LIMIT格式（仅允许数字和逗号）
 		sqlStr += " LIMIT " + db.Limit
 	}
-	var result sql.Result
-	var err error
-	if db.Tx != nil {
-		result, err = db.Tx.ExecContext(ctx, sqlStr, db.WhereArgs...)
-	} else {
-		result, err = db.Db.ExecContext(ctx, sqlStr, db.WhereArgs...)
-	}
+	result, err := db.execContextRetry(ctx, sqlStr, db.WhereArgs...)
 	if err != nil {
 		// 包装错误，保留原始错误链和SQL信息（便于调试）
 		return 0, fmt.Errorf("执行更新SQL失败，SQL：%s，values:%s,错误：%w", sqlStr, function.Json_encode(db.WhereArgs), err)
@@ -939,14 +1074,8 @@ func (db *MysqlDb) Exec(ctx context.Context, sqlStr string, values ...interface{
 	if len(sqlStr) == 0 {
 		return 0, errors.New("Exec需要执行的SQL语句不能为空")
 	}
-	// 5. 执行SQL并处理错误
-	var result sql.Result
-	var err error
-	if db.Tx != nil {
-		result, err = db.Tx.ExecContext(ctx, sqlStr, values...)
-	} else {
-		result, err = db.Db.ExecContext(ctx, sqlStr, values...)
-	}
+	// 5. 执行SQL并处理错误（非事务路径带退避重试）
+	result, err := db.execContextRetry(ctx, sqlStr, values...)
 	if err != nil {
 		// 包装错误，保留原始错误链和SQL信息（便于调试）
 		return 0, fmt.Errorf("执行Exec的SQL失败，SQL：%s,values:%s,，错误：%w", sqlStr, function.Json_encode(values), err)
@@ -1075,6 +1204,7 @@ func (db *MysqlDb) clearData(isClearTx bool) {
 	db.Field = ""
 	db.RelationList = nil
 	db.Limit = ""
+	db.UpsertCols = nil
 	db.Err = nil
 	if isClearTx {
 		db.Tx = nil

@@ -89,6 +89,12 @@ func Boot(cfg *BootConfig) (*BootContext, error) {
 	if len(config.DbConfig.Es) > 0 {
 		startDb = append(startDb, "es")
 	}
+	if len(config.DbConfig.Postgresql) > 0 {
+		startDb = append(startDb, "postgresql")
+	}
+	if len(config.DbConfig.Clickhouse) > 0 {
+		startDb = append(startDb, "clickhouse")
+	}
 	if len(startDb) > 0 {
 		db.StartDb(startDb)
 	}
@@ -251,6 +257,12 @@ func BootCron(cfg *BootConfig) error {
 	}
 	if len(config.DbConfig.Es) > 0 {
 		startDb = append(startDb, "es")
+	}
+	if len(config.DbConfig.Postgresql) > 0 {
+		startDb = append(startDb, "postgresql")
+	}
+	if len(config.DbConfig.Clickhouse) > 0 {
+		startDb = append(startDb, "clickhouse")
 	}
 	if len(startDb) > 0 {
 		db.StartDb(startDb)

@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/dfpopp/go-dai/db/clickhouse"
 	"github.com/dfpopp/go-dai/db/elasticSearch"
 	"github.com/dfpopp/go-dai/db/mongoDb"
 	"github.com/dfpopp/go-dai/db/mysql"
+	"github.com/dfpopp/go-dai/db/postgresql"
 	"github.com/dfpopp/go-dai/db/redisDb"
 	"github.com/dfpopp/go-dai/function"
 )
@@ -22,6 +24,10 @@ func StartDb(dbTypeList []string) {
 			redisDb.InitRedis()
 		case "es":
 			elasticSearch.InitEs()
+		case "postgresql":
+			postgresql.InitPostgres()
+		case "clickhouse":
+			clickhouse.InitClickhouse()
 		}
 	}
 }
@@ -71,6 +77,28 @@ func CloseDb(dbTypeList []string) {
 				fmt.Printf("Es 连接关闭失败: %v\n", err)
 			} else {
 				fmt.Println("所有 ES 连接已关闭")
+			}
+		}()
+	}
+	if function.InArray("postgresql", dbTypeList) {
+		go func() {
+			defer wg.Done()
+			fmt.Println("\n开始关闭 Postgresql 连接...")
+			if err := postgresql.ClosePostgres(); err != nil {
+				fmt.Printf("Postgresql 连接关闭失败: %v\n", err)
+			} else {
+				fmt.Println("所有 Postgresql 连接已关闭")
+			}
+		}()
+	}
+	if function.InArray("clickhouse", dbTypeList) {
+		go func() {
+			defer wg.Done()
+			fmt.Println("\n开始关闭 Clickhouse 连接...")
+			if err := clickhouse.CloseClickhouse(); err != nil {
+				fmt.Printf("Clickhouse 连接关闭失败: %v\n", err)
+			} else {
+				fmt.Println("所有 Clickhouse 连接已关闭")
 			}
 		}()
 	}

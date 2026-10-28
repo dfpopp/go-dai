@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 func CallSetWhere(mg *Db, ctx context.Context, coll string) {
@@ -128,11 +128,9 @@ func CallSetUpdateUpsert(mg *Db, ctx context.Context, coll string) {
 }
 func CallSetUpdateArrayFilters(mg *Db, ctx context.Context, coll string) {
 	fmt.Println("\n--- SetUpdateArrayFilters 调用实例 ---")
-	// 构建数组过滤条件：匹配actors数组中name=张三的元素
-	arrayFilters := options.ArrayFilters{
-		Filters: []interface{}{
-			bson.D{{Key: "actor.name", Value: "张三"}}, // 过滤条件别名：actor
-		},
+	// 构建数组过滤条件：匹配actors数组中name=张三的元素（v2起SetUpdateArrayFilters直接接收[]interface{}）
+	arrayFilters := []interface{}{
+		bson.D{{Key: "actor.name", Value: "张三"}}, // 过滤条件别名：actor
 	}
 
 	// 执行更新：将匹配的数组元素的role改为"主角"

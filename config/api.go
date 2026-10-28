@@ -49,6 +49,22 @@ func GetRedisConfig() map[string]RedisConfig {
 	return DbConfig.Redis
 }
 
+// GetPostgresqlConfig 获取PostgreSQL数据库配置
+func GetPostgresqlConfig() map[string]PostgresqlConfig {
+	if DbConfig == nil {
+		return nil
+	}
+	return DbConfig.Postgresql
+}
+
+// GetClickhouseConfig 获取ClickHouse数据库配置
+func GetClickhouseConfig() map[string]ClickhouseConfig {
+	if DbConfig == nil {
+		return nil
+	}
+	return DbConfig.Clickhouse
+}
+
 // GetGlobalConfig 获取全局配置实例
 func GetGlobalConfig() Config {
 	if globalConfig == nil {

@@ -1,13 +1,15 @@
 package base
 
 import (
+	"strings"
+
+	"github.com/dfpopp/go-dai/db/clickhouse"
 	"github.com/dfpopp/go-dai/db/elasticSearch"
 	"github.com/dfpopp/go-dai/db/mongoDb"
 	"github.com/dfpopp/go-dai/db/mysql"
+	"github.com/dfpopp/go-dai/db/postgresql"
 	"github.com/dfpopp/go-dai/db/redisDb"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	"strings"
+	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 type BaseModel struct {
@@ -18,9 +20,14 @@ type BaseModel struct {
 func (m *BaseModel) Init() {
 	m.BaseComponent.Init()
 }
-
 func (m *BaseModel) GetMysqlDb(DbTag string) (*mysql.MysqlDb, error) {
 	return mysql.GetMysqlDB(DbTag)
+}
+func (m *BaseModel) GetPostgresDb(DbTag string) (*postgresql.PostgresDb, error) {
+	return postgresql.GetPostgresDB(DbTag)
+}
+func (m *BaseModel) GetClickhouseDb(DbTag string) (*clickhouse.ClickhouseDb, error) {
+	return clickhouse.GetClickhouseDB(DbTag)
 }
 func (m *BaseModel) GetMongoDb(DbTag string) (*mongoDb.Db, error) {
 	return mongoDb.GetMongoDB(DbTag)
@@ -31,10 +38,10 @@ func (m *BaseModel) GetESDb(DbTag string) (*elasticSearch.ESDb, error) {
 func (m *BaseModel) GetRedis(DbTag string) (*redisDb.RedisDb, error) {
 	return redisDb.GetRedisDB(DbTag)
 }
-func (m *BaseModel) StrIdToObjectID(id string) (primitive.ObjectID, error) {
+func (m *BaseModel) StrIdToObjectID(id string) (bson.ObjectID, error) {
 	return mongoDb.IdToObjectID(id)
 }
-func (m *BaseModel) ObjectIDToString(id primitive.ObjectID) string {
+func (m *BaseModel) ObjectIDToString(id bson.ObjectID) string {
 	return mongoDb.ObjectIDToString(id)
 }
 func (m *BaseModel) MapToBsonD(data map[string]interface{}) bson.D {
