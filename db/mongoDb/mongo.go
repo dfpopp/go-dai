@@ -157,6 +157,16 @@ func connect(cfg config.MongodbConfig) (*mongo.Client, error) {
 	clientOpts.SetMinPoolSize(cfg.MinPoolSize)
 	clientOpts.SetMaxConnIdleTime(time.Duration(cfg.MaxConnIdleTime) * time.Second)
 	clientOpts.SetConnectTimeout(time.Duration(cfg.Timeout) * time.Second)
+	// 业务配置 op_timeout>0 时启用客户端级操作超时（CSOT，与 SetConnectTimeout 的连接超时相互独立）：
+	// 1. 仅对无显式 deadline 的 ctx 生效，显式 deadline 的操作取两者较早者；
+	// 2. 非游标命令（count/distinct/insert/update/delete）由驱动将剩余预算作为 maxTimeMS 追加到
+	//    发往服务端的报文，超时由服务端终止命令（返回 MaxTimeMSExpired/Code 50），真实服务端超时；
+	// 3. 游标命令（Find/Aggregate）驱动规定不发 maxTimeMS（DRIVERS-2722，避免游标被服务端杀掉后
+	//    getMore 报 cursor not found），到点由客户端放弃等待并断开连接，服务端在连接断开后终止查询；
+	// 目的：防止业务层 context.Background() 的慢查询无限挂死调用方。
+	if cfg.OpTimeout > 0 {
+		clientOpts.SetTimeout(time.Duration(cfg.OpTimeout) * time.Second)
+	}
 	// 建立连接（v2起Connect不再接收ctx，拨号超时由SetConnectTimeout控制）
 	client, err := mongo.Connect(clientOpts)
 	if err != nil {

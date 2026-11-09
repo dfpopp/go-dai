@@ -121,6 +121,10 @@ func createClickhouseConnection(dbKey string, cfg config.ClickhouseConfig) {
 	dsn := fmt.Sprintf("clickhouse://%s:%s?username=%s&password=%s&database=%s",
 		cfg.Host, cfg.Port,
 		url.QueryEscape(cfg.User), url.QueryEscape(cfg.Pwd), url.QueryEscape(cfg.Dbname))
+	// 业务配置 max_execution_time>0 时启用 ClickHouse 服务端查询超时（秒），超时由服务端终止查询
+	if cfg.MaxExecutionTime > 0 {
+		dsn += fmt.Sprintf("&max_execution_time=%d", cfg.MaxExecutionTime)
+	}
 	db, err := sql.Open("clickhouse", dsn)
 	if err != nil {
 		logger.Error("ClickHouse连接失败: " + err.Error())

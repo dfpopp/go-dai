@@ -121,6 +121,11 @@ func createPostgresConnection(dbKey string, cfg config.PostgresqlConfig) {
 	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s",
 		url.QueryEscape(cfg.User), url.QueryEscape(cfg.Pwd),
 		cfg.Host, cfg.Port, url.QueryEscape(cfg.Dbname), sslMode)
+	// 业务配置 statement_timeout>0 时启用 PostgreSQL 服务端语句超时（pgx 将非标准 DSN 参数作为
+	// 服务端 runtime parameter 下发到每个会话，超时由服务端取消语句并立刻释放资源；秒→毫秒）
+	if cfg.StatementTimeout > 0 {
+		dsn += fmt.Sprintf("&statement_timeout=%d", cfg.StatementTimeout*1000)
+	}
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		logger.Error("PostgreSQL连接失败: " + err.Error())

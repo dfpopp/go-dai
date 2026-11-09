@@ -102,31 +102,33 @@ type MySQLConfig struct {
 
 // PostgresqlConfig PostgreSQL连接配置
 type PostgresqlConfig struct {
-	Host            string `json:"host"`
-	Port            string `json:"port"`
-	User            string `json:"user"`
-	Pwd             string `json:"pwd"`
-	Dbname          string `json:"dbname"`
-	Pre             string `json:"pre"`
-	SslMode         string `json:"ssl_mode"` // SSL模式（disable/require/verify-ca/verify-full），默认disable
-	MaxOpenConnNum  int    `json:"max_open_conn_num"`
-	MaxIdleConnNum  int    `json:"max_idle_conn_num"`
-	ConnMaxIdleTime int    `json:"conn_max_idleTime"`
-	ConnMaxLifetime int    `json:"conn_max_lifetime"`
+	Host             string `json:"host"`
+	Port             string `json:"port"`
+	User             string `json:"user"`
+	Pwd              string `json:"pwd"`
+	Dbname           string `json:"dbname"`
+	Pre              string `json:"pre"`
+	SslMode          string `json:"ssl_mode"`          // SSL模式（disable/require/verify-ca/verify-full），默认disable
+	MaxOpenConnNum   int    `json:"max_open_conn_num"`
+	MaxIdleConnNum   int    `json:"max_idle_conn_num"`
+	ConnMaxIdleTime  int    `json:"conn_max_idleTime"`
+	ConnMaxLifetime  int    `json:"conn_max_lifetime"`
+	StatementTimeout int    `json:"statement_timeout"` // 语句最大执行时长（秒），0=不限制（向后兼容）；>0 时经 DSN 下发 statement_timeout（秒→毫秒），由 PostgreSQL 服务端取消超时语句并立刻释放资源
 }
 
 // ClickhouseConfig ClickHouse连接配置
 type ClickhouseConfig struct {
-	Host            string `json:"host"`
-	Port            string `json:"port"`
-	User            string `json:"user"`
-	Pwd             string `json:"pwd"`
-	Dbname          string `json:"dbname"`
-	Pre             string `json:"pre"`
-	MaxOpenConnNum  int    `json:"max_open_conn_num"`
-	MaxIdleConnNum  int    `json:"max_idle_conn_num"`
-	ConnMaxIdleTime int    `json:"conn_max_idleTime"`
-	ConnMaxLifetime int    `json:"conn_max_lifetime"`
+	Host             string `json:"host"`
+	Port             string `json:"port"`
+	User             string `json:"user"`
+	Pwd              string `json:"pwd"`
+	Dbname           string `json:"dbname"`
+	Pre              string `json:"pre"`
+	MaxOpenConnNum   int    `json:"max_open_conn_num"`
+	MaxIdleConnNum   int    `json:"max_idle_conn_num"`
+	ConnMaxIdleTime  int    `json:"conn_max_idleTime"`
+	ConnMaxLifetime  int    `json:"conn_max_lifetime"`
+	MaxExecutionTime int    `json:"max_execution_time"` // 查询最大执行时长（秒），0=不限制（向后兼容）；>0 时拼入 DSN 的 max_execution_time，由 ClickHouse 服务端终止超时查询并立刻释放资源
 }
 
 // MongodbConfig MongoDB连接配置
@@ -142,6 +144,7 @@ type MongodbConfig struct {
 	MinPoolSize     uint64 `json:"min_pool_size"`      // 最小空闲连接数
 	MaxConnIdleTime int    `json:"max_conn_idle_time"` // 空闲连接 多少秒后关闭
 	Timeout         int    `json:"timeout"`            // 连接超时时间(秒)
+	OpTimeout       int    `json:"op_timeout"`         // 客户端级操作超时（秒，CSOT），0=不启用（向后兼容）；>0 时设置 driver 的 ClientOptions.Timeout，仅对无显式 deadline 的操作生效，显式超时的操作取更早者
 }
 
 // RedisConfig redis连接配置
