@@ -3,6 +3,8 @@
 /.vscode/
 /记忆/
 /*.zip
+/AGENTS.md
+/AGENT编码规则.md
 /goDai应用开发验收标准.md
 /重构代码规范.md
 /代码规范文档.md
