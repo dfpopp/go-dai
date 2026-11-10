@@ -214,3 +214,85 @@ func TestDeleteWithLimit(t *testing.T) {
 		t.Error("Delete should return error when Db is nil")
 	}
 }
+
+// TestPostgresDb_SetUpsert 测试PG upsert三件套的校验逻辑与ON CONFLICT ... DO UPDATE段构建（纯断言，不连库）
+func TestPostgresDb_SetUpsert(t *testing.T) {
+	db := &PostgresDb{ConflictCols: []string{"uid"}, UpsertCols: []string{"update_time"}, UpsertIncCols: []string{"count"}}
+
+	// 1. 单行Insert：覆盖列 "col" = ?、累加列 "col" = "col" + ?，增量值追加values末尾
+	clause, values, err := db.buildUpsertFields(map[string]interface{}{"update_time": 111, "count": 3}, false, nil)
+	if err != nil {
+		t.Fatalf("single row build failed: %v", err)
+	}
+	want := "\"update_time\" = ?, \"count\" = \"count\" + ?"
+	if clause != want {
+		t.Errorf("single row clause = %q, want %q", clause, want)
+	}
+	if len(values) != 2 || values[0] != 111 || values[1] != 3 {
+		t.Errorf("single row values = %v, want [111 3]", values)
+	}
+
+	// 2. 批量InsertAll：EXCLUDED."col"逐行取本行值，不追加参数
+	clause, values, err = db.buildUpsertFields(map[string]interface{}{"update_time": 111, "count": 3}, true, nil)
+	if err != nil {
+		t.Fatalf("batch build failed: %v", err)
+	}
+	want = "\"update_time\" = EXCLUDED.\"update_time\", \"count\" = \"count\" + EXCLUDED.\"count\""
+	if clause != want {
+		t.Errorf("batch clause = %q, want %q", clause, want)
+	}
+	if len(values) != 0 {
+		t.Errorf("batch values = %v, want empty", values)
+	}
+
+	// 3. ON CONFLICT整段构建：冲突目标列双引号包裹，DO UPDATE SET拼接正确
+	seg, values, err := db.buildUpsertConflictClause(map[string]interface{}{"update_time": 111, "count": 3}, true, nil)
+	if err != nil {
+		t.Fatalf("conflict clause build failed: %v", err)
+	}
+	want = " ON CONFLICT (\"uid\") DO UPDATE SET \"update_time\" = EXCLUDED.\"update_time\", \"count\" = \"count\" + EXCLUDED.\"count\""
+	if seg != want {
+		t.Errorf("conflict clause = %q, want %q", seg, want)
+	}
+	if len(values) != 0 {
+		t.Errorf("conflict clause batch values = %v, want empty", values)
+	}
+
+	// 4. 设置了更新列但缺冲突目标列：报错（PG的DO UPDATE必须显式指定ON CONFLICT目标，fail fast）
+	dbNoConflict := &PostgresDb{UpsertIncCols: []string{"count"}}
+	_, _, err = dbNoConflict.buildUpsertFields(map[string]interface{}{"count": 3}, false, nil)
+	if err == nil {
+		t.Error("buildUpsertFields should return error when ConflictCols is empty")
+	}
+
+	// 5. 同一列同时进两个列表：双向拦截（防静默双倍累加）
+	db = &PostgresDb{}
+	db = db.SetUpsert("count")
+	db = db.SetUpsertInc("count")
+	if db.Err == nil {
+		t.Error("SetUpsertInc should return error when col already in UpsertCols")
+	}
+	db = &PostgresDb{}
+	db = db.SetUpsertInc("count")
+	db = db.SetUpsert("count")
+	if db.Err == nil {
+		t.Error("SetUpsert should return error when col already in UpsertIncCols")
+	}
+
+	// 6. clearData清空三个upsert字段
+	db = &PostgresDb{}
+	db = db.SetUpsertConflict("uid").SetUpsert("update_time").SetUpsertInc("count")
+	if db.Err != nil {
+		t.Fatalf("set methods should not return error: %v", db.Err)
+	}
+	db.clearData(false)
+	if len(db.ConflictCols) != 0 || len(db.UpsertCols) != 0 || len(db.UpsertIncCols) != 0 {
+		t.Errorf("clearData should reset upsert fields, got conflict=%v upsert=%v inc=%v", db.ConflictCols, db.UpsertCols, db.UpsertIncCols)
+	}
+
+	// 7. 只设置冲突目标不设置更新列：生成空段（退化为普通INSERT，冲突时数据库报duplicate key显性失败）
+	seg, _, err = (&PostgresDb{ConflictCols: []string{"uid"}}).buildUpsertConflictClause(map[string]interface{}{"a": 1}, false, nil)
+	if err != nil || seg != "" {
+		t.Errorf("conflict clause without update cols = %q, err = %v, want empty with no error", seg, err)
+	}
+}

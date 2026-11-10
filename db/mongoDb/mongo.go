@@ -433,6 +433,7 @@ func (m *Db) FindAll(ctx context.Context) *Db {
 		return m
 	}
 	if m.Db == nil {
+		m.Err = errors.New("MongoDB客户端未初始化")
 		return m
 	}
 	if m.Collection == "" {
@@ -684,10 +685,12 @@ func (m *Db) Delete(ctx context.Context) (int64, error) {
 		return 0, m.Err
 	}
 	if m.Collection == "" {
-		return 0, errors.New("未指定集合名")
+		m.Err = errors.New("未指定集合名")
+		return 0, m.Err
 	}
 	if len(m.Filter) == 0 {
-		return 0, errors.New("查询条件不能为空（防止全表删除）")
+		m.Err = errors.New("查询条件不能为空（防止全表删除）")
+		return 0, m.Err
 	}
 
 	coll := m.Db.Collection(m.Collection)
@@ -709,10 +712,12 @@ func (m *Db) DeleteOne(ctx context.Context) (int64, error) {
 		return 0, m.Err
 	}
 	if m.Collection == "" {
-		return 0, errors.New("未指定集合名")
+		m.Err = errors.New("未指定集合名")
+		return 0, m.Err
 	}
 	if len(m.Filter) == 0 {
-		return 0, errors.New("查询条件不能为空")
+		m.Err = errors.New("查询条件不能为空")
+		return 0, m.Err
 	}
 
 	coll := m.Db.Collection(m.Collection)

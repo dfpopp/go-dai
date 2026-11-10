@@ -2,6 +2,7 @@ package mongoDb
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -129,7 +130,8 @@ func TestDb_Methods(t *testing.T) {
 		t.Error("DeleteOne should return error when Db is nil")
 	}
 
-	// 测试ToString方法
+	// 测试ToString方法（DeleteOne的defer clearData会清掉Err，显式设置以验证ToString对Err的处理）
+	testDb.Err = errors.New("模拟未清理的错误")
 	_, err = testDb.ToString()
 	if err == nil {
 		t.Error("ToString should return error when Err is set")

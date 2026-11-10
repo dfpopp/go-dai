@@ -150,3 +150,87 @@ func TestBatchUpdateCaseWhen(t *testing.T) {
 		t.Error("BatchUpdateCaseWhen should return non-empty string when data is provided")
 	}
 }
+
+// TestMysqlDb_SetUpsertInc 测试SetUpsertInc的校验逻辑与ON DUPLICATE KEY UPDATE累加段构建（纯断言，不连库）
+func TestMysqlDb_SetUpsertInc(t *testing.T) {
+	// 1. 单行Insert：累加列生成 `col` = `col` + ?，增量值追加values末尾
+	db := &MysqlDb{UpsertIncCols: []string{"count"}}
+	clause, values, err := db.buildUpsertFields(map[string]interface{}{"count": 3}, false, nil)
+	if err != nil {
+		t.Fatalf("single row build failed: %v", err)
+	}
+	if clause != "`count` = `count` + ?" {
+		t.Errorf("single row clause = %q, want `count` = `count` + ?", clause)
+	}
+	if len(values) != 1 || values[0] != 3 {
+		t.Errorf("single row values = %v, want [3]", values)
+	}
+
+	// 2. 批量InsertAll：累加列生成 `col` = `col` + VALUES(`col`)，不追加参数
+	db = &MysqlDb{UpsertIncCols: []string{"count"}}
+	clause, values, err = db.buildUpsertFields(map[string]interface{}{"count": 3}, true, nil)
+	if err != nil {
+		t.Fatalf("batch build failed: %v", err)
+	}
+	if clause != "`count` = `count` + VALUES(`count`)" {
+		t.Errorf("batch clause = %q, want `count` = `count` + VALUES(`count`)", clause)
+	}
+	if len(values) != 0 {
+		t.Errorf("batch values = %v, want empty", values)
+	}
+
+	// 3. 覆盖列与累加列共存：覆盖列在前、累加列在后，逗号连接
+	db = &MysqlDb{UpsertCols: []string{"update_time"}, UpsertIncCols: []string{"count"}}
+	clause, values, err = db.buildUpsertFields(map[string]interface{}{"update_time": 111, "count": 2}, true, nil)
+	if err != nil {
+		t.Fatalf("mixed build failed: %v", err)
+	}
+	want := "`update_time` = VALUES(`update_time`), `count` = `count` + VALUES(`count`)"
+	if clause != want {
+		t.Errorf("mixed clause = %q, want %q", clause, want)
+	}
+	if len(values) != 0 {
+		t.Errorf("mixed batch values = %v, want empty", values)
+	}
+
+	// 4. 同一列同时进两个列表：双向拦截（防静默双倍累加）
+	db = &MysqlDb{}
+	db = db.SetUpsert("count")
+	db = db.SetUpsertInc("count")
+	if db.Err == nil {
+		t.Error("SetUpsertInc should return error when col already in UpsertCols")
+	}
+	db = &MysqlDb{}
+	db = db.SetUpsertInc("count")
+	db = db.SetUpsert("count")
+	if db.Err == nil {
+		t.Error("SetUpsert should return error when col already in UpsertIncCols")
+	}
+
+	// 5. 列名带反引号、空格、分号：被isValidField拦下
+	for _, bad := range []string{"cou`nt", "co unt", "count;drop"} {
+		db = &MysqlDb{}
+		db = db.SetUpsertInc(bad)
+		if db.Err == nil {
+			t.Errorf("SetUpsertInc should return error for invalid col %q", bad)
+		}
+	}
+
+	// 6. 连续两次SetUpsertInc：clearData必须清空，不能把上一次的累加列带到下一个查询
+	db = &MysqlDb{}
+	db = db.SetUpsertInc("count")
+	if db.Err != nil {
+		t.Fatalf("SetUpsertInc should not return error: %v", db.Err)
+	}
+	db.clearData(false)
+	if len(db.UpsertIncCols) != 0 {
+		t.Errorf("clearData should reset UpsertIncCols, got %v", db.UpsertIncCols)
+	}
+
+	// 7. 累加列不在插入数据中：报错，不发SQL
+	db = &MysqlDb{UpsertIncCols: []string{"count"}}
+	_, _, err = db.buildUpsertFields(map[string]interface{}{"other": 1}, false, nil)
+	if err == nil {
+		t.Error("buildUpsertFields should return error when inc col missing in data")
+	}
+}

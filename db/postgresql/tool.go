@@ -29,26 +29,34 @@ var validTableRegex = regexp.MustCompile(`^` +
 	`)` +
 	`$`)
 
-var validFieldRegex = regexp.MustCompile(`(?i)(?:
-	# 第一部分：注入风险特征（匹配到即非法）
-	\b(UNION|SELECT|INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|REPLACE|EXEC|EXECUTE)\b|  # 危险关键字
-	--|/\*|\*/|#|                                                                   # 注释符
-	;|                                                                              # 语句分隔符
-	\bOR\s+1\s*=|\bAND\s+1\s*=|                                                     # 万能密码注入
-	\bWHERE\b|\bFROM\b|\bJOIN\b|                                                    # 非法子句关键字
-	# 第二部分：非法字符（匹配到即非法，仅允许[\w\s().,'"]）
-	[^a-zA-Z0-9_\s().,'"]
-)`)
-var validWhereRegex = regexp.MustCompile(`(?i)
-    (?:--|#|;|\|\|)                          # 注释符、分号、管道符（终止语句/拼接）
-    |(?:UNION\s+ALL\s+SELECT|UNION\s+SELECT) # UNION注入
-    |(?:INSERT\s+INTO|UPDATE\s+|DELETE\s+FROM|DROP\s+|ALTER\s+|TRUNCATE\s+) # 危险操作
-    |(?:EXEC\s+|XP_|\s+OR\s+\d+\s*=\s*\d+|AND\s+\d+\s*=\s*\d+) # 逻辑注入/执行命令
-    |(?:CHAR\s*\(|ASCII\s*\(|CONCAT\s*\(|GROUP_CONCAT\s*\()    # 字符拼接函数
-    |(?:SELECT\s+.+?\s+FROM\s+.+?)          # 嵌套查询
-    |(?:['"]).*?['"]                        # 单双引号（参数化查询不应出现）
-    |(?:\$\{|\}\$)                          # 模板注入
-`)
+// 字段名校验：匹配到以下任一模式即非法
+// - 危险关键字、注释符、语句分隔符、万能密码注入、子句关键字
+// - 字符白名单之外的字符（仅允许字母/数字/下划线/空白/括号/点/逗号/引号）
+var validFieldRegex = regexp.MustCompile(`(?i)(?:` +
+	`\b(UNION|SELECT|INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|REPLACE|EXEC|EXECUTE)\b|` +
+	`--|/\*|\*/|#|;|` +
+	`\bOR\s+1\s*=|\bAND\s+1\s*=|` +
+	`\bWHERE\b|\bFROM\b|\bJOIN\b|` +
+	`[^a-zA-Z0-9_\s().,'"]` +
+	`)`)
+
+// where子句校验：匹配到以下任一模式即非法（参数化查询不应出现分号/引号/注释/危险语句）
+var validWhereRegex = regexp.MustCompile(`(?i)(?:` +
+	`--|#|;|\|\||` +
+	`UNION\s+ALL\s+SELECT|UNION\s+SELECT|` +
+	`INSERT\s+INTO|UPDATE\s+|DELETE\s+FROM|DROP\s+|ALTER\s+|TRUNCATE\s+|` +
+	`EXEC\s+|XP_|\s+OR\s+\d+\s*=\s*\d+|AND\s+\d+\s*=\s*\d+|` +
+	`CHAR\s*\(|ASCII\s*\(|CONCAT\s*\(|GROUP_CONCAT\s*\(|` +
+	`SELECT\s+.+?\s+FROM\s+.+?|` +
+	`(?:['"]).*?['"]|` +
+	`\$\{|\}\$` +
+	`)`)
+
+// 严格标识符：字母/下划线开头 + 字母数字下划线。用于会被引号包裹的列名（upsert覆盖列/累加列/冲突目标列），
+// 不允许空格/括号/点等，避免isValidField为兼容COUNT(*)/a AS b而放行"co unt"这类值。
+var validIdentRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+// 聚合函数内的星号整体形态：COUNT(*)/SUM(*)/AVG(*)/MIN(*)/MAX(*)，用于isValidField放行
+var aggStarRegex = regexp.MustCompile(`(?i)\b(COUNT|SUM|AVG|MIN|MAX)\(\s*\*\s*\)`)
 var validOrderRegex = regexp.MustCompile(`^(?:` +
 	// 单个排序项：支持`字段名`/`字段名`.`子字段名` 格式，可选asc/desc
 	"`?[a-zA-Z_][a-zA-Z0-9_]*`?(?:\\.`?[a-zA-Z_][a-zA-Z0-9_]*`?)*" +
@@ -84,11 +92,19 @@ func isValidField(s string) bool {
 		if f == "" {
 			continue
 		}
+		// 聚合函数内的星号（如COUNT(*)）先替换为占位，再走常规校验；其余位置的星号仍被拦截
+		f = aggStarRegex.ReplaceAllString(f, "${1}(1)")
 		if validFieldRegex.MatchString(f) {
 			return false
 		}
 	}
 	return true
+}
+
+// 校验严格标识符（字母/下划线开头，仅字母数字下划线）
+// 用于会被引号包裹的列名：upsert覆盖列、累加列、冲突目标列
+func isValidIdent(s string) bool {
+	return validIdentRegex.MatchString(s)
 }
 
 // 校验查询条件是否为合法标识符（防止注入）

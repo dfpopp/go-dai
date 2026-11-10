@@ -39,6 +39,7 @@ type MysqlDb struct {
 	RelationList   []string
 	Limit          string
 	UpsertCols     []string // 唯一键冲突时更新的列（SetUpsert设置，Insert/InsertAll生成ON DUPLICATE KEY UPDATE）
+	UpsertIncCols  []string // 唯一键冲突时累加的列（SetUpsertInc设置，Insert/InsertAll生成ON DUPLICATE KEY UPDATE `col` = `col` + <本次值>）
 	Data           []map[string]interface{}
 	Err            error
 	// 连接类瞬时错误重试配置（连接池创建时从database.json读取，0/false走默认值）
@@ -201,6 +202,7 @@ func GetMysqlDB(dbKey string) (*MysqlDb, error) {
 		RelationList:       nil,
 		Limit:              "",
 		UpsertCols:         nil,
+		UpsertIncCols:      nil,
 		Data:               nil,
 		Err:                nil,
 		RetryMaxAttempts:   dbObj.RetryMaxAttempts,
@@ -725,13 +727,86 @@ func (db *MysqlDb) SetUpsert(cols ...string) *MysqlDb {
 	}
 	for _, col := range cols {
 		col = strings.TrimSpace(col)
-		if col == "" || !isValidField(col) {
+		if !isValidIdent(col) {
 			db.Err = fmt.Errorf("upsert列名[%s]非法，存在注入风险", col)
 			return db
+		}
+		// 与累加列互斥：同列同时出现在两个列表会生成两条赋值，MySQL顺序执行后结果翻倍且不报错
+		for _, exist := range db.UpsertIncCols {
+			if exist == col {
+				db.Err = fmt.Errorf("列[%s]不能同时作为upsert覆盖列和累加列", col)
+				return db
+			}
 		}
 		db.UpsertCols = append(db.UpsertCols, col)
 	}
 	return db
+}
+
+// SetUpsertInc 设置唯一键冲突时"在旧值基础上累加"的列（配合Insert/InsertAll生成ON DUPLICATE KEY UPDATE `col` = `col` + <本次值>）
+// 与SetUpsert可共存：同一语句既有覆盖列（如update_time）也有累加列（如count），拼接时覆盖列在前、累加列在后
+// 注意：
+//  1. 同一列禁止同时出现在SetUpsert与SetUpsertInc中（MySQL顺序执行赋值，会静默产生双倍累加）
+//  2. 累加列必须为NOT NULL（col + NULL结果为NULL），且传入值不可为nil
+//  3. 累加写非幂等：database.json开启retry_on_invalid_conn时，连接类"结果未知"错误的重试会导致重复累加
+func (db *MysqlDb) SetUpsertInc(cols ...string) *MysqlDb {
+	if db.Err != nil {
+		return db
+	}
+	if len(cols) == 0 {
+		db.Err = errors.New("upsert累加列不能为空")
+		return db
+	}
+	for _, col := range cols {
+		col = strings.TrimSpace(col)
+		if !isValidIdent(col) {
+			db.Err = fmt.Errorf("upsert累加列名[%s]非法，存在注入风险", col)
+			return db
+		}
+		// 与覆盖列互斥：同列同时出现在两个列表会生成两条赋值，MySQL顺序执行后结果翻倍且不报错
+		for _, exist := range db.UpsertCols {
+			if exist == col {
+				db.Err = fmt.Errorf("列[%s]不能同时作为upsert覆盖列和累加列", col)
+				return db
+			}
+		}
+		db.UpsertIncCols = append(db.UpsertIncCols, col)
+	}
+	return db
+}
+
+// buildUpsertFields 构建ON DUPLICATE KEY UPDATE的赋值片段（覆盖列在前、累加列在后，逗号连接）
+// batch=false（单行Insert）：覆盖列 `col` = ?、累加列 `col` = `col` + ?（值从data取，追加到values末尾，全参数化）
+// batch=true（批量InsertAll）：覆盖列 `col` = VALUES(`col`)、累加列 `col` = `col` + VALUES(`col`)
+// （批量场景一行对应一组参数、赋值段整条语句只出现一次，无法按行参数化，只能取本行插入值；VALUES()写法MySQL 8.4起弃用但仍可用，项目最低支持8.0.12不支持AS别名）
+// 返回拼接好的赋值片段与追加后的参数列表；data中缺失列时返回错误
+func (db *MysqlDb) buildUpsertFields(data map[string]interface{}, batch bool, values []interface{}) (string, []interface{}, error) {
+	var fields []string
+	// 覆盖列在前：赋值语义（冲突时覆盖为本次值）
+	for _, col := range db.UpsertCols {
+		if _, ok := data[col]; !ok {
+			return "", values, fmt.Errorf("upsert列[%s]不在插入数据中", col)
+		}
+		if batch {
+			fields = append(fields, fmt.Sprintf("`%s` = VALUES(`%s`)", col, col))
+		} else {
+			fields = append(fields, fmt.Sprintf("`%s` = ?", col))
+			values = append(values, data[col])
+		}
+	}
+	// 累加列在后：累加语义（冲突时在旧值基础上加本次值）
+	for _, col := range db.UpsertIncCols {
+		if _, ok := data[col]; !ok {
+			return "", values, fmt.Errorf("upsert累加列[%s]不在插入数据中", col)
+		}
+		if batch {
+			fields = append(fields, fmt.Sprintf("`%s` = `%s` + VALUES(`%s`)", col, col, col))
+		} else {
+			fields = append(fields, fmt.Sprintf("`%s` = `%s` + ?", col, col))
+			values = append(values, data[col])
+		}
+	}
+	return strings.Join(fields, ", "), values, nil
 }
 func (db *MysqlDb) Insert(ctx context.Context, data map[string]interface{}) (int64, error) {
 	defer db.clearData(false)
@@ -764,18 +839,14 @@ func (db *MysqlDb) Insert(ctx context.Context, data map[string]interface{}) (int
 	fieldStr := strings.Join(fields, ", ")
 	placeholderStr := strings.Join(placeholders, ", ")
 	sqlStr := fmt.Sprintf("INSERT INTO `%s` (%s) VALUES (%s)", db.Table, fieldStr, placeholderStr)
-	// 拼接ON DUPLICATE KEY UPDATE段：`col` = ? 参数取data中对应值（全参数化，无拼接注入面）
-	if len(db.UpsertCols) > 0 {
-		var upsertFields []string
-		for _, col := range db.UpsertCols {
-			value, ok := data[col]
-			if !ok {
-				return 0, fmt.Errorf("upsert列[%s]不在插入数据中", col)
-			}
-			upsertFields = append(upsertFields, fmt.Sprintf("`%s` = ?", col))
-			values = append(values, value)
+	// 拼接ON DUPLICATE KEY UPDATE段（覆盖列在前、累加列在后；单行场景累加值参数化追加到values末尾）
+	if len(db.UpsertCols) > 0 || len(db.UpsertIncCols) > 0 {
+		upsertStr, newValues, err := db.buildUpsertFields(data, false, values)
+		if err != nil {
+			return 0, err
 		}
-		sqlStr += " ON DUPLICATE KEY UPDATE " + strings.Join(upsertFields, ", ")
+		values = newValues
+		sqlStr += " ON DUPLICATE KEY UPDATE " + upsertStr
 	}
 
 	// 执行SQL（非事务路径带退避重试）
@@ -858,16 +929,13 @@ func (db *MysqlDb) InsertAll(ctx context.Context, dataList []map[string]interfac
 	fieldStr := strings.Join(fields, ", ")
 	batchPlaceholderStr := strings.Join(batchPlaceholders, ", ")
 	sqlStr := fmt.Sprintf("INSERT INTO `%s` (%s) VALUES %s", db.Table, fieldStr, batchPlaceholderStr)
-	// 拼接ON DUPLICATE KEY UPDATE段：VALUES(col)逐行取本行插入值（批量场景无法整体参数化；该写法MySQL 8.4起弃用但仍可用）
-	if len(db.UpsertCols) > 0 {
-		var upsertFields []string
-		for _, col := range db.UpsertCols {
-			if _, ok := firstData[col]; !ok {
-				return 0, fmt.Errorf("upsert列[%s]不在插入数据中", col)
-			}
-			upsertFields = append(upsertFields, fmt.Sprintf("`%s` = VALUES(`%s`)", col, col))
+	// 拼接ON DUPLICATE KEY UPDATE段（覆盖列在前、累加列在后；批量场景用VALUES(col)逐行取本行值，无法按行参数化）
+	if len(db.UpsertCols) > 0 || len(db.UpsertIncCols) > 0 {
+		upsertStr, _, err := db.buildUpsertFields(firstData, true, nil)
+		if err != nil {
+			return 0, err
 		}
-		sqlStr += " ON DUPLICATE KEY UPDATE " + strings.Join(upsertFields, ", ")
+		sqlStr += " ON DUPLICATE KEY UPDATE " + upsertStr
 	}
 	// 执行批量插入SQL（非事务路径带退避重试）
 	result, err := db.execContextRetry(ctx, sqlStr, allValues...)
@@ -1068,21 +1136,25 @@ func (db *MysqlDb) Delete(ctx context.Context) (int64, error) {
 // Exec 执行sql语句，该方法不要依赖用户提交数据，仅执行一些特殊的SQL语句保证sqlStr是绝对安全的，不存在注入等情况
 func (db *MysqlDb) Exec(ctx context.Context, sqlStr string, values ...interface{}) (int64, error) {
 	if db.Db == nil {
-		return 0, errors.New("数据库连接池未初始化（mysql.Db为nil）")
+		db.Err = errors.New("数据库连接池未初始化（mysql.Db为nil）")
+		return 0, db.Err
 	}
 	// 空数据校验
 	if len(sqlStr) == 0 {
-		return 0, errors.New("Exec需要执行的SQL语句不能为空")
+		db.Err = errors.New("Exec需要执行的SQL语句不能为空")
+		return 0, db.Err
 	}
 	// 5. 执行SQL并处理错误（非事务路径带退避重试）
 	result, err := db.execContextRetry(ctx, sqlStr, values...)
 	if err != nil {
-		// 包装错误，保留原始错误链和SQL信息（便于调试）
-		return 0, fmt.Errorf("执行Exec的SQL失败，SQL：%s,values:%s,，错误：%w", sqlStr, function.Json_encode(values), err)
+		// 包装错误，保留原始错误链和SQL信息（便于调试）；落db.Err使链式调用的后续方法短路
+		db.Err = fmt.Errorf("执行Exec的SQL失败，SQL：%s,values:%s,，错误：%w", sqlStr, function.Json_encode(values), err)
+		return 0, db.Err
 	}
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return 0, fmt.Errorf("获取受影响行数失败：%w", err)
+		db.Err = fmt.Errorf("获取受影响行数失败：%w", err)
+		return 0, db.Err
 	}
 	return rowsAffected, nil
 }
@@ -1205,6 +1277,7 @@ func (db *MysqlDb) clearData(isClearTx bool) {
 	db.RelationList = nil
 	db.Limit = ""
 	db.UpsertCols = nil
+	db.UpsertIncCols = nil
 	db.Err = nil
 	if isClearTx {
 		db.Tx = nil

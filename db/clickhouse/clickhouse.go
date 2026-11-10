@@ -882,21 +882,25 @@ func (db *ClickhouseDb) Delete(ctx context.Context) (int64, error) {
 // Exec 执行sql语句，该方法不要依赖用户提交数据，仅执行一些特殊的SQL语句保证sqlStr是绝对安全的，不存在注入等情况
 func (db *ClickhouseDb) Exec(ctx context.Context, sqlStr string, values ...interface{}) (int64, error) {
 	if db.Db == nil {
-		return 0, errors.New("数据库连接池未初始化（clickhouse.Db为nil）")
+		db.Err = errors.New("数据库连接池未初始化（clickhouse.Db为nil）")
+		return 0, db.Err
 	}
 	// 空数据校验
 	if len(sqlStr) == 0 {
-		return 0, errors.New("Exec需要执行的SQL语句不能为空")
+		db.Err = errors.New("Exec需要执行的SQL语句不能为空")
+		return 0, db.Err
 	}
 	// 执行SQL并处理错误
 	result, err := db.Db.ExecContext(ctx, sqlStr, values...)
 	if err != nil {
-		// 包装错误，保留原始错误链和SQL信息（便于调试）
-		return 0, fmt.Errorf("执行Exec的SQL失败，SQL：%s,values:%s,，错误：%w", sqlStr, function.Json_encode(values), err)
+		// 包装错误，保留原始错误链和SQL信息（便于调试）；落db.Err使链式调用的后续方法短路
+		db.Err = fmt.Errorf("执行Exec的SQL失败，SQL：%s,values:%s,，错误：%w", sqlStr, function.Json_encode(values), err)
+		return 0, db.Err
 	}
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return 0, fmt.Errorf("获取受影响行数失败：%w", err)
+		db.Err = fmt.Errorf("获取受影响行数失败：%w", err)
+		return 0, db.Err
 	}
 	return rowsAffected, nil
 }
