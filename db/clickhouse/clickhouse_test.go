@@ -107,3 +107,33 @@ func TestClickhouseDb_SetWhereInvalid(t *testing.T) {
 		t.Error("SetWhere should return error when tpl contains dangerous keyword")
 	}
 }
+
+// TestClickhouseDb_IsValidFieldQuotedIdent 成对反引号标识符（保留字列）放行、其余形态仍拦截（与mysql同款精简矩阵）
+func TestClickhouseDb_IsValidFieldQuotedIdent(t *testing.T) {
+	valid := []string{
+		"`window`",
+		"`t`.`window`",
+		"`order`.id",
+		"`select`,`order`,`group`",
+		"COUNT(*)", "id", "*", "t.id AS x",
+	}
+	for _, s := range valid {
+		if !isValidField(s) {
+			t.Errorf("isValidField(%q) = false, want true", s)
+		}
+	}
+	invalid := []string{
+		"`window",            // 落单反引号
+		"win`dow",            // 反引号嵌在标识符中间
+		"`sel``ect`",         // 双反引号转义，本实现不接受
+		"`a` OR 1=1",         // 剥离后仍须命中万能密码规则
+		"`a`; DROP TABLE t",  // 分号/DROP
+		"`a` UNION SELECT b", // 注入关键字
+		"a;b", "id FROM t", "",
+	}
+	for _, s := range invalid {
+		if isValidField(s) {
+			t.Errorf("isValidField(%q) = true, want false", s)
+		}
+	}
+}

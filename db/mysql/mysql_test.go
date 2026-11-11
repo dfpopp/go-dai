@@ -234,3 +234,41 @@ func TestMysqlDb_SetUpsertInc(t *testing.T) {
 		t.Error("buildUpsertFields should return error when inc col missing in data")
 	}
 }
+
+// TestIsValidFieldQuotedIdent 成对反引号标识符（保留字列）放行、其余形态仍拦截。
+// 回归背景：校验器修复生效后，`window` 等MySQL 8.0保留字列被字符白名单误判注入，
+// 导致waf CC规则查询全量失败（业务侧ccRuleCols必须写`window`）。
+func TestIsValidFieldQuotedIdent(t *testing.T) {
+	valid := []string{
+		"`window`",
+		// waf_cc_rule 真实字段串（线上全量报错的回归锚点）
+		"id,site_id,name,target,conditions,logic,threshold,`window`,action,scope,redirect_url,sort,status,create_time,update_time",
+		"`t`.`window`",
+		"`order`.id",               // bidResourceServer 真实用例（order为保留字）
+		"`name`,`module`,`value`",  // unionServer 真实用例
+		"`select`,`order`,`group`", // 保留字列名不应被关键字规则误伤
+		"`window` AS w",
+		"COUNT(*)", "id", "*", "t.id AS x",
+	}
+	for _, s := range valid {
+		if !isValidField(s) {
+			t.Errorf("isValidField(%q) = false, want true", s)
+		}
+	}
+	invalid := []string{
+		"`window",            // 落单反引号
+		"win`dow",            // 反引号嵌在标识符中间
+		"`win`dow`",          // 三段式落单
+		"`sel``ect`",         // MySQL双反引号转义，本实现不接受
+		"`a` OR 1=1",         // 剥离后仍须命中万能密码规则
+		"`a`; DROP TABLE t",  // 分号/DROP
+		"`a`--",              // 注释符
+		"`a` UNION SELECT b", // 注入关键字
+		"a;b", "id FROM t", "",
+	}
+	for _, s := range invalid {
+		if isValidField(s) {
+			t.Errorf("isValidField(%q) = true, want false", s)
+		}
+	}
+}

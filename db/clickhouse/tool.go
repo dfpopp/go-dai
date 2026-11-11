@@ -83,6 +83,39 @@ func isValidTable(s string) bool {
 	return validTableRegex.MatchString(strings.TrimSpace(s))
 }
 
+// 成对反引号包裹的合法标识符：`col` / `t`.`col`
+// 保留字列名（MySQL/ClickHouse的window/order/group等）必须带反引号才能出现在SELECT中，
+// 内部仅允许严格标识符，避免注入片段被整体剥离后绕过校验
+var quotedIdentRegex = regexp.MustCompile("`[a-zA-Z_][a-zA-Z0-9_]*`")
+
+// stripQuotedIdents 把成对反引号标识符替换为中性占位符，再交给validFieldRegex校验。
+// 用占位符而非原内容，是为了让`select`/`from`等保留字列名不被危险关键字规则误伤；
+// 落单、嵌套（``转义）或内部含非法字符的反引号一律判非法，保留字符白名单的拦截能力。
+func stripQuotedIdents(s string) (string, bool) {
+	if !strings.Contains(s, "`") {
+		return s, true
+	}
+	// 双反引号（内嵌转义）不在支持范围内，直接判非法，避免被拆成两个标识符绕过
+	if strings.Contains(s, "``") {
+		return "", false
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if s[i] != '`' {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		loc := quotedIdentRegex.FindStringIndex(s[i:])
+		if loc == nil || loc[0] != 0 {
+			return "", false
+		}
+		b.WriteString("x") // 中性标识符占位
+		i += loc[1]
+	}
+	return b.String(), true
+}
+
 // 校验字段名是否为合法标识符（防止注入）
 func isValidField(s string) bool {
 	if s == "*" { // 通配符*允许
@@ -100,7 +133,12 @@ func isValidField(s string) bool {
 		}
 		// 聚合函数内的星号（如COUNT(*)）先替换为占位，再走常规校验；其余位置的星号仍被拦截
 		f = aggStarRegex.ReplaceAllString(f, "${1}(1)")
-		if validFieldRegex.MatchString(f) {
+		// 成对反引号标识符（保留字列）先归一化，落单反引号直接判非法
+		stripped, ok := stripQuotedIdents(f)
+		if !ok {
+			return false
+		}
+		if validFieldRegex.MatchString(stripped) {
 			return false
 		}
 	}
